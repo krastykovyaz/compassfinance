@@ -103,9 +103,15 @@ export async function getApprovedAccounts(): Promise<string[]> {
   }
 }
 
-export async function getChainId(
-  provider: Eip1193Provider | null = getInjectedProvider()
-): Promise<number> {
+// `explicitProvider` is `Eip1193Provider | null | undefined` at call sites —
+// wallet-provider.tsx's `wcProvider` state is `null` (not `undefined`) for
+// an injected connection, and a default *parameter* only fires on
+// `undefined`. Falling back with `??` in the body (instead of a default
+// parameter) means both "omitted" and "explicitly null" correctly resolve
+// to the injected provider, instead of null silently bypassing the
+// fallback and producing a false "No injected wallet found".
+export async function getChainId(explicitProvider?: Eip1193Provider | null): Promise<number> {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
   const hex = (await provider.request({ method: "eth_chainId" })) as string;
   return parseInt(hex, 16);
@@ -116,11 +122,12 @@ export async function getChainId(
 export async function getUsdcBalance(
   address: string,
   chainId: number,
-  provider: Eip1193Provider | null = getInjectedProvider()
+  explicitProvider?: Eip1193Provider | null
 ): Promise<number | null> {
   const chain = SUPPORTED_CHAINS[chainId];
   if (!chain) return null; // unsupported network — caller decides how to show this
 
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
 
   const selector = "0x70a08231"; // balanceOf(address)
@@ -145,8 +152,9 @@ export async function getUsdcBalance(
 
 export function subscribeAccountsChanged(
   cb: (accounts: string[]) => void,
-  provider: Eip1193Provider | null = getInjectedProvider()
+  explicitProvider?: Eip1193Provider | null
 ): () => void {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(args[0] as string[]);
   provider.on("accountsChanged", handler);
@@ -155,8 +163,9 @@ export function subscribeAccountsChanged(
 
 export function subscribeChainChanged(
   cb: (chainId: number) => void,
-  provider: Eip1193Provider | null = getInjectedProvider()
+  explicitProvider?: Eip1193Provider | null
 ): () => void {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(parseInt(args[0] as string, 16));
   provider.on("chainChanged", handler);
@@ -165,8 +174,9 @@ export function subscribeChainChanged(
 
 export function subscribeDisconnect(
   cb: () => void,
-  provider: Eip1193Provider | null = getInjectedProvider()
+  explicitProvider?: Eip1193Provider | null
 ): () => void {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = () => cb();
   provider.on("disconnect", handler);

@@ -123,6 +123,13 @@ describe("getChainId — network detection", () => {
   it("throws when no wallet is available", async () => {
     await expect(getChainId()).rejects.toThrow(/No injected wallet/);
   });
+
+  it("falls back to the injected provider when explicitly passed null (not just when omitted) — regression: wallet-provider.tsx's wcProvider state is `null`, not `undefined`, for an injected connection, and a JS default parameter only fires on `undefined`", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "0x1") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    expect(await getChainId(null)).toBe(1);
+  });
 });
 
 describe("isSupportedChain", () => {
@@ -172,6 +179,14 @@ describe("getUsdcBalance — network detection + balance parsing", () => {
   it("throws when no wallet is available for a supported chain", async () => {
     await expect(getUsdcBalance("0xabc", 1)).rejects.toThrow(/No injected wallet/);
   });
+
+  it("falls back to the injected provider when explicitly passed null (not just when omitted)", async () => {
+    const raw = (500_000).toString(16).padStart(64, "0");
+    const provider = mockProvider({ request: vi.fn(async () => `0x${raw}`) });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    expect(await getUsdcBalance("0xabc", 1, null)).toBeCloseTo(0.5, 6);
+  });
 });
 
 describe("subscribeAccountsChanged / subscribeChainChanged / subscribeDisconnect — wallet-initiated events", () => {
@@ -216,5 +231,15 @@ describe("subscribeAccountsChanged / subscribeChainChanged / subscribeDisconnect
     expect(() => subscribeAccountsChanged(vi.fn())()).not.toThrow();
     expect(() => subscribeChainChanged(vi.fn())()).not.toThrow();
     expect(() => subscribeDisconnect(vi.fn())()).not.toThrow();
+  });
+
+  it("falls back to the injected provider when explicitly passed null (not just when omitted)", () => {
+    const provider = mockProvider();
+    vi.stubGlobal("window", { ethereum: provider });
+
+    const cb = vi.fn();
+    subscribeAccountsChanged(cb, null);
+    provider._emit("accountsChanged", ["0xnew"]);
+    expect(cb).toHaveBeenCalledWith(["0xnew"]);
   });
 });
