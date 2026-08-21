@@ -258,6 +258,9 @@ const fr: Dictionary = {
     analystRatings: "Notes des analystes",
     assetNotInDemo: "Cet actif ne fait pas encore partie du jeu de données de démo.",
     asset: "Actif",
+    perpetualsHyperliquid: "Contrats perpétuels — Hyperliquid",
+    perpBadge: "Perp",
+    fundingRate: "Financement",
   },
   portfolio: {
     portfolio: "Portefeuille",

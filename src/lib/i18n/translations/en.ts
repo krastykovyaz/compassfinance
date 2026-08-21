@@ -261,6 +261,9 @@ const en = {
     analystRatings: "Analyst ratings",
     assetNotInDemo: "This asset isn't in the demo dataset yet.",
     asset: "Asset",
+    perpetualsHyperliquid: "Perpetuals — Hyperliquid",
+    perpBadge: "Perp",
+    fundingRate: "Funding",
   },
   portfolio: {
     portfolio: "Portfolio",

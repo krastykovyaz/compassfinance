@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { AssetRow } from "@/components/home/asset-row";
+import { HyperliquidMarketRow } from "@/components/markets/hyperliquid-market-row";
+import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
 import { ALL_ASSETS } from "@/lib/assets/catalog";
 import { filterAssets, OVERVIEW_FILTERS, OverviewFilter } from "@/lib/assets/filters";
 import { isAssetLocked } from "@/lib/assets/lock-status";
@@ -46,6 +48,7 @@ function MarketsPageContent() {
   };
 
   const { bySlug, unavailable } = useMarketData(ALL_MARKET_SYMBOLS);
+  const { markets: hyperliquidMarkets, enabled: hyperliquidEnabled } = useHyperliquidMarkets();
   const { isFavorite, toggleFavorite } = useFavorites();
   const { account } = usePaperAccount();
   const { isInvestmentUnlocked } = useProgress();
@@ -107,6 +110,24 @@ function MarketsPageContent() {
             ))}
           </div>
         )}
+
+        {/* Independent from the catalog list above — Hyperliquid perpetual
+            markets are real, live data but have no learning content, no
+            investment-unlock stage, and are not tradable via Paper Trading.
+            Renders nothing at all when the feature is off or unreachable,
+            so the rest of this page is unaffected either way. */}
+        {hyperliquidEnabled && hyperliquidMarkets.length > 0 ? (
+          <div className="mt-6">
+            <h2 className="px-1 text-[15px] font-semibold text-ink">
+              {t("market.perpetualsHyperliquid")}
+            </h2>
+            <div className="mt-1 divide-y divide-border">
+              {hyperliquidMarkets.map((m) => (
+                <HyperliquidMarketRow key={m.assetId} market={m} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );

@@ -258,6 +258,9 @@ const ru: Dictionary = {
     analystRatings: "Рейтинги аналитиков",
     assetNotInDemo: "Этот актив пока отсутствует в демо-наборе данных.",
     asset: "Актив",
+    perpetualsHyperliquid: "Бессрочные контракты — Hyperliquid",
+    perpBadge: "Перп",
+    fundingRate: "Фандинг",
   },
   portfolio: {
     portfolio: "Портфель",

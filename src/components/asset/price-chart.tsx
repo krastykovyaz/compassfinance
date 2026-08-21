@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
 import { TriangleAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { useAssetCandles } from "@/lib/market/use-asset-candles";
+import { usePriceChartCandles } from "@/lib/market/use-price-chart-candles";
 import { CHART_RANGES, ChartRange, MarketSymbol } from "@/lib/market/market-types";
 import { cn } from "@/lib/utils";
 
 export function PriceChart({ slug }: { slug: MarketSymbol }) {
   const [range, setRange] = useState<ChartRange>("1D");
-  const { candles, status, reason } = useAssetCandles(slug, range);
+  const { candles, status, reason } = usePriceChartCandles(slug, range);
 
   const series = useMemo(() => candles.map((c) => ({ t: c.t, v: c.c })), [candles]);
   const positive =
