@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Wallet, Loader2, TriangleAlert, ExternalLink } from "lucide-react";
 import { DarkCard } from "@/components/ui/card";
 import { useWallet } from "@/lib/wallet/wallet-provider";
+import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
 import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -22,8 +24,9 @@ function Skeleton() {
 
 export function HyperliquidAccountPanel() {
   const { t } = useTranslation();
-  const { status: walletStatus, address, isConnecting, isUnsupportedChain, connect } = useWallet();
+  const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage } = useHyperliquidAccount();
+  const [modalOpen, setModalOpen] = useState(false);
 
   // Not connected — the wallet layer is generic EVM and works regardless
   // of the Hyperliquid flag, so this state is always the same real
@@ -40,13 +43,14 @@ export function HyperliquidAccountPanel() {
             <p className="text-xs text-dark-ink-muted">{t("hyperliquidAccount.connectPrompt")}</p>
           </div>
           <button
-            onClick={connect}
+            onClick={() => setModalOpen(true)}
             disabled={isConnecting}
             className="flex shrink-0 items-center gap-1.5 rounded-full bg-blue px-4 py-2 text-[13px] font-medium text-white active:opacity-90 disabled:opacity-60"
           >
             {isConnecting ? <Loader2 size={14} className="animate-spin" /> : t("wallet.connectWallet")}
           </button>
         </div>
+        <WalletConnectModal open={modalOpen} onClose={() => setModalOpen(false)} />
       </DarkCard>
     );
   }

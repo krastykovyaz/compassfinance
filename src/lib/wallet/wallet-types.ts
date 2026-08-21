@@ -44,6 +44,14 @@ export type WalletContextValue = WalletState & {
   connect: () => Promise<void>;
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
+  /** Starts a WalletConnect connection attempt (mobile Safari/Chrome, or
+   * desktop without an injected wallet). No-op if not configured. */
+  connectWalletConnect: () => Promise<void>;
+  /** Set once a WalletConnect pairing URI is available to render as a QR
+   * code / deep link. Cleared on connect, disconnect, or cancel. */
+  walletConnectUri: string | null;
+  /** True when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is configured. */
+  isWalletConnectAvailable: boolean;
 };
 
 // Minimal EIP-1193 provider interface — the same shape MetaMask and other

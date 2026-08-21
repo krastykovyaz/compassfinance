@@ -35,7 +35,12 @@ describe("Hyperliquid integration never touches Learning/Unlock/Paper Trading", 
 // Hyperliquid — wallet-link-sync.tsx only ever talks to /api/user/wallet.
 describe("The wallet layer never touches Paper Trading or the learning/unlock system", () => {
   it("wallet-provider.tsx and evm-wallet-provider.tsx import nothing paper/unlock/learning-related", () => {
-    const files = ["src/lib/wallet/wallet-provider.tsx", "src/lib/wallet/evm-wallet-provider.tsx"];
+    const files = [
+      "src/lib/wallet/wallet-provider.tsx",
+      "src/lib/wallet/evm-wallet-provider.tsx",
+      "src/lib/wallet/walletconnect-provider.ts",
+      "src/lib/wallet/walletconnect-deep-links.ts",
+    ];
     for (const f of files) {
       const src = readFileSync(f, "utf8");
       expect(src).not.toMatch(/paper/i);

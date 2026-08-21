@@ -122,6 +122,12 @@ const ru: Dictionary = {
     balanceUnavailable: "Баланс недоступен",
     refreshBalance: "Обновить баланс",
     usdcLabel: "кошелёк (USDC)",
+    chooseConnectionMethod: "Выберите способ подключения",
+    browserExtension: "Расширение браузера",
+    scanWithPhone: "Отсканируйте телефоном",
+    orContinueWith: "Или откройте напрямую в",
+    waitingForQrCode: "Создание QR-кода…",
+    walletConnectUnavailable: "Способ подключения кошелька пока недоступен.",
   },
   trade: {
     practiceBuying: "Учебная покупка",

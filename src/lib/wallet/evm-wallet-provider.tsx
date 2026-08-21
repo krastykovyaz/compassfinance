@@ -103,8 +103,9 @@ export async function getApprovedAccounts(): Promise<string[]> {
   }
 }
 
-export async function getChainId(): Promise<number> {
-  const provider = getInjectedProvider();
+export async function getChainId(
+  provider: Eip1193Provider | null = getInjectedProvider()
+): Promise<number> {
   if (!provider) throw new Error("No injected wallet found");
   const hex = (await provider.request({ method: "eth_chainId" })) as string;
   return parseInt(hex, 16);
@@ -114,12 +115,12 @@ export async function getChainId(): Promise<number> {
 // read-only RPC call, no signature or gas required.
 export async function getUsdcBalance(
   address: string,
-  chainId: number
+  chainId: number,
+  provider: Eip1193Provider | null = getInjectedProvider()
 ): Promise<number | null> {
   const chain = SUPPORTED_CHAINS[chainId];
   if (!chain) return null; // unsupported network — caller decides how to show this
 
-  const provider = getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
 
   const selector = "0x70a08231"; // balanceOf(address)
@@ -143,25 +144,29 @@ export async function getUsdcBalance(
 }
 
 export function subscribeAccountsChanged(
-  cb: (accounts: string[]) => void
+  cb: (accounts: string[]) => void,
+  provider: Eip1193Provider | null = getInjectedProvider()
 ): () => void {
-  const provider = getInjectedProvider();
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(args[0] as string[]);
   provider.on("accountsChanged", handler);
   return () => provider.removeListener("accountsChanged", handler);
 }
 
-export function subscribeChainChanged(cb: (chainId: number) => void): () => void {
-  const provider = getInjectedProvider();
+export function subscribeChainChanged(
+  cb: (chainId: number) => void,
+  provider: Eip1193Provider | null = getInjectedProvider()
+): () => void {
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(parseInt(args[0] as string, 16));
   provider.on("chainChanged", handler);
   return () => provider.removeListener("chainChanged", handler);
 }
 
-export function subscribeDisconnect(cb: () => void): () => void {
-  const provider = getInjectedProvider();
+export function subscribeDisconnect(
+  cb: () => void,
+  provider: Eip1193Provider | null = getInjectedProvider()
+): () => void {
   if (!provider) return () => {};
   const handler = () => cb();
   provider.on("disconnect", handler);

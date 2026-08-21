@@ -125,6 +125,12 @@ const en = {
     balanceUnavailable: "Balance unavailable",
     refreshBalance: "Refresh balance",
     usdcLabel: "wallet (USDC)",
+    chooseConnectionMethod: "Choose how to connect",
+    browserExtension: "Browser extension",
+    scanWithPhone: "Scan with your phone",
+    orContinueWith: "Or open directly in",
+    waitingForQrCode: "Generating QR code…",
+    walletConnectUnavailable: "No wallet connection method is available yet.",
   },
   trade: {
     practiceBuying: "Practice buying",

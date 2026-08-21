@@ -122,6 +122,12 @@ const fr: Dictionary = {
     balanceUnavailable: "Solde indisponible",
     refreshBalance: "Actualiser le solde",
     usdcLabel: "portefeuille (USDC)",
+    chooseConnectionMethod: "Choisissez comment vous connecter",
+    browserExtension: "Extension de navigateur",
+    scanWithPhone: "Scannez avec votre téléphone",
+    orContinueWith: "Ou ouvrez directement dans",
+    waitingForQrCode: "Génération du QR code…",
+    walletConnectUnavailable: "Aucune méthode de connexion au portefeuille n'est disponible pour le moment.",
   },
   trade: {
     practiceBuying: "Achat d'entraînement de",

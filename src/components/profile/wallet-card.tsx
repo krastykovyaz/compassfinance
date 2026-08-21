@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Wallet, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useWallet } from "@/lib/wallet/wallet-provider";
+import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 
 function shortAddress(address: string) {
@@ -19,11 +21,11 @@ export function WalletCard() {
     isConnecting,
     isBalanceLoading,
     error,
-    connect,
     disconnect,
     refreshBalance,
   } = useWallet();
   const { t } = useTranslation();
+  const [modalOpen, setModalOpen] = useState(false);
 
   if (status !== "connected") {
     return (
@@ -48,7 +50,7 @@ export function WalletCard() {
             </p>
           </div>
           <button
-            onClick={connect}
+            onClick={() => setModalOpen(true)}
             disabled={isConnecting}
             className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-surface active:opacity-90 disabled:opacity-60"
           >
@@ -68,6 +70,7 @@ export function WalletCard() {
             <span>{error.message}</span>
           </div>
         ) : null}
+        <WalletConnectModal open={modalOpen} onClose={() => setModalOpen(false)} />
       </Card>
     );
   }
