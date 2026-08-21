@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { Wallet, Loader2, TriangleAlert, ExternalLink } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { DarkCard } from "@/components/ui/card";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
-import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { useHyperliquidAccount, HyperliquidAccountStatus } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -22,16 +23,52 @@ function Skeleton() {
   );
 }
 
+export type HyperliquidPanelView =
+  | "not-connected"
+  | "hyperliquid-disabled"
+  | "sign-in-required"
+  | "loading"
+  | "error"
+  | "content";
+
+// Pure "which branch should this panel render" decision, pulled out of the
+// component so it's directly testable without a renderer (this repo's test
+// setup has no jsdom/@testing-library). Also the fix for a real bug: the
+// component used to treat useHyperliquidAccount()'s "disconnected" status
+// as loading, always — but "disconnected" is also the status while the
+// wallet IS connected and the user just isn't signed in (Hyperliquid
+// account data requires an authenticated session), which never resolves to
+// anything else. That produced an infinite-looking skeleton for a guest
+// with a connected wallet, instead of a real "sign in" message.
+export function resolveHyperliquidPanelView(params: {
+  walletStatus: string;
+  address: string | null;
+  sessionStatus: string;
+  accountStatus: HyperliquidAccountStatus;
+  errorMessage: string | null;
+}): HyperliquidPanelView {
+  const { walletStatus, address, sessionStatus, accountStatus, errorMessage } = params;
+  if (walletStatus !== "connected" || !address) return "not-connected";
+  if (accountStatus === "unavailable" && errorMessage === "disabled") return "hyperliquid-disabled";
+  if (accountStatus === "disconnected" && sessionStatus !== "authenticated") return "sign-in-required";
+  if (accountStatus === "loading" || accountStatus === "disconnected") return "loading";
+  if (accountStatus === "error" || accountStatus === "unavailable") return "error";
+  return "content";
+}
+
 export function HyperliquidAccountPanel() {
   const { t } = useTranslation();
+  const { status: sessionStatus } = useSession();
   const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
-  const { snapshot, openOrders, fills, status: accountStatus, errorMessage } = useHyperliquidAccount();
+  const { snapshot, openOrders, fills, status: accountStatus, errorMessage, refresh } = useHyperliquidAccount();
   const [modalOpen, setModalOpen] = useState(false);
+
+  const view = resolveHyperliquidPanelView({ walletStatus, address, sessionStatus, accountStatus, errorMessage });
 
   // Not connected — the wallet layer is generic EVM and works regardless
   // of the Hyperliquid flag, so this state is always the same real
   // disconnected UI, never a fake balance.
-  if (walletStatus !== "connected" || !address) {
+  if (view === "not-connected") {
     return (
       <DarkCard>
         <div className="flex items-center gap-3">
@@ -55,14 +92,17 @@ export function HyperliquidAccountPanel() {
     );
   }
 
+  // From here on the wallet IS connected, so `address` is guaranteed non-null.
+  const connectedAddress = address as string;
+
   // Hyperliquid feature disabled — the wallet itself IS connected (shown
   // truthfully above the fold), only the Hyperliquid-specific data is
   // unavailable.
-  if (accountStatus === "unavailable" && errorMessage === "disabled") {
+  if (view === "hyperliquid-disabled") {
     return (
       <DarkCard>
         <div className="flex items-center justify-between">
-          <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(address)}</p>
+          <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
         </div>
         <div className="mt-3 flex items-center gap-1.5 text-dark-ink-muted">
           <TriangleAlert size={14} />
@@ -72,23 +112,44 @@ export function HyperliquidAccountPanel() {
     );
   }
 
-  if (accountStatus === "loading" || accountStatus === "disconnected") {
+  // Wallet connected but not signed in — Hyperliquid account data requires
+  // an authenticated session, and this state never resolves on its own, so
+  // it needs its own message rather than sitting under the loading skeleton.
+  if (view === "sign-in-required") {
     return (
       <DarkCard>
-        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(address)}</p>
+        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
+        <div className="mt-3 flex items-center gap-1.5 text-dark-ink-muted">
+          <TriangleAlert size={14} />
+          <p className="text-[13px]">{t("hyperliquidAccount.signInRequired")}</p>
+        </div>
+      </DarkCard>
+    );
+  }
+
+  if (view === "loading") {
+    return (
+      <DarkCard>
+        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
         <Skeleton />
       </DarkCard>
     );
   }
 
-  if (accountStatus === "error" || accountStatus === "unavailable") {
+  if (view === "error") {
     return (
       <DarkCard>
-        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(address)}</p>
+        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
         <div className="mt-3 flex items-center gap-1.5 text-dark-ink-muted">
           <TriangleAlert size={14} />
           <p className="text-[13px]">{errorMessage ?? t("hyperliquidAccount.dataUnavailable")}</p>
         </div>
+        <button
+          onClick={() => refresh()}
+          className="mt-3 flex items-center gap-1.5 text-[13px] font-medium text-blue-400"
+        >
+          {t("general.retry")}
+        </button>
       </DarkCard>
     );
   }
@@ -99,7 +160,7 @@ export function HyperliquidAccountPanel() {
   return (
     <DarkCard>
       <div className="flex items-center justify-between">
-        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(address)}</p>
+        <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
         <a
           href={`https://app.hyperliquid.xyz/portfolio`}
           target="_blank"

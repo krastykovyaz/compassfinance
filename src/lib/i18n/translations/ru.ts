@@ -284,6 +284,7 @@ const ru: Dictionary = {
     notConnected: "Подключите кошелёк",
     connectPrompt: "Смотрите реальный баланс и позиции Hyperliquid.",
     dataUnavailable: "Данные Hyperliquid недоступны.",
+    signInRequired: "Войдите, чтобы увидеть свой аккаунт Hyperliquid.",
     viewOnHyperliquid: "Посмотреть на Hyperliquid",
     availableBalance: "Доступный баланс",
     accountValue: "Стоимость счёта",

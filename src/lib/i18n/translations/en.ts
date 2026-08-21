@@ -287,6 +287,7 @@ const en = {
     notConnected: "Connect your wallet",
     connectPrompt: "See your real Hyperliquid balance and positions.",
     dataUnavailable: "Hyperliquid data unavailable.",
+    signInRequired: "Sign in to view your Hyperliquid account.",
     viewOnHyperliquid: "View on Hyperliquid",
     availableBalance: "Available balance",
     accountValue: "Account value",

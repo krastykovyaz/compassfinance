@@ -60,6 +60,22 @@ const initialState: WalletState = {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
+// Pure state transitions for a balance load, pulled out of loadBalance()
+// below so they're directly testable without rendering anything (the
+// hook itself can't run outside a React tree in this repo's test setup).
+// The success case clearing `error` is the fix for a real regression: a
+// transient balance-fetch failure used to leave its error message on
+// screen forever, even after a later refresh succeeded — the UI showed a
+// correct, live balance right next to a stale error banner from an
+// attempt that no longer reflects reality.
+export function balanceLoadedState(prev: WalletState, balance: number | null): WalletState {
+  return { ...prev, usdcBalance: balance, isBalanceLoading: false, error: null };
+}
+
+export function balanceLoadFailedState(prev: WalletState, message: string): WalletState {
+  return { ...prev, isBalanceLoading: false, error: { type: "balance-error", message } };
+}
+
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<WalletState>(initialState);
   const [wcProvider, setWcProvider] = useState<Eip1193Provider | null>(null);
@@ -76,16 +92,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setState((s) => ({ ...s, isBalanceLoading: true }));
       try {
         const balance = await getUsdcBalance(address, chainId, provider);
-        setState((s) => ({ ...s, usdcBalance: balance, isBalanceLoading: false }));
+        setState((s) => balanceLoadedState(s, balance));
       } catch (err) {
-        setState((s) => ({
-          ...s,
-          isBalanceLoading: false,
-          error: {
-            type: "balance-error",
-            message: err instanceof Error ? err.message : "Couldn't load USDC balance",
-          },
-        }));
+        setState((s) =>
+          balanceLoadFailedState(s, err instanceof Error ? err.message : "Couldn't load USDC balance")
+        );
       }
     },
     []

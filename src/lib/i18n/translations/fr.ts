@@ -284,6 +284,7 @@ const fr: Dictionary = {
     notConnected: "Connectez votre portefeuille",
     connectPrompt: "Consultez votre solde et vos positions Hyperliquid réels.",
     dataUnavailable: "Données Hyperliquid indisponibles.",
+    signInRequired: "Connectez-vous pour voir votre compte Hyperliquid.",
     viewOnHyperliquid: "Voir sur Hyperliquid",
     availableBalance: "Solde disponible",
     accountValue: "Valeur du compte",
