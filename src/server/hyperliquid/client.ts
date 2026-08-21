@@ -202,3 +202,103 @@ export async function fetchL2Book(coin: string): Promise<HyperliquidFetchResult<
 
   return { ok: true, data: data as HyperliquidRawL2Book };
 }
+
+// --- Account (Phase 2) — same single public endpoint, no auth: every call
+// is keyed by a wallet address only, never a private key or signature. ---
+
+export type HyperliquidRawPosition = {
+  coin: string;
+  szi: string;
+  entryPx: string | null;
+  leverage: { type: string; value: number };
+  liquidationPx: string | null;
+  unrealizedPnl: string;
+  marginUsed: string;
+  positionValue: string;
+};
+
+export type HyperliquidRawAssetPosition = {
+  position: HyperliquidRawPosition;
+  type: string;
+};
+
+export type HyperliquidRawMarginSummary = {
+  accountValue: string;
+  totalMarginUsed: string;
+  totalNtlPos: string;
+  totalRawUsd: string;
+};
+
+export type HyperliquidRawClearinghouseState = {
+  assetPositions: HyperliquidRawAssetPosition[];
+  marginSummary: HyperliquidRawMarginSummary;
+  withdrawable: string;
+  time: number;
+};
+
+export type HyperliquidRawOpenOrder = {
+  coin: string;
+  limitPx: string;
+  oid: number;
+  side: "A" | "B";
+  sz: string;
+  timestamp: number;
+};
+
+export type HyperliquidRawFill = {
+  coin: string;
+  side: "A" | "B";
+  px: string;
+  sz: string;
+  closedPnl: string;
+  fee: string;
+  time: number;
+  oid: number;
+};
+
+export async function fetchClearinghouseState(
+  user: string
+): Promise<HyperliquidFetchResult<HyperliquidRawClearinghouseState>> {
+  const result = await postInfo<unknown>({ type: "clearinghouseState", user });
+  if (!result.ok) return result;
+
+  const data = result.data as Partial<HyperliquidRawClearinghouseState> | null;
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray(data.assetPositions) ||
+    typeof data.marginSummary?.accountValue !== "string" ||
+    typeof data.withdrawable !== "string"
+  ) {
+    return { ok: false, reason: "malformed_response", message: `Malformed clearinghouse state for ${user}` };
+  }
+
+  return { ok: true, data: data as HyperliquidRawClearinghouseState };
+}
+
+export async function fetchOpenOrders(user: string): Promise<HyperliquidFetchResult<HyperliquidRawOpenOrder[]>> {
+  const result = await postInfo<unknown>({ type: "openOrders", user });
+  if (!result.ok) return result;
+
+  const data = result.data;
+  // An empty array is a completely normal, valid "no open orders" state —
+  // unlike candles, never treated as malformed.
+  if (!Array.isArray(data) || !data.every((o) => o && typeof o.coin === "string" && typeof o.oid === "number")) {
+    return { ok: false, reason: "malformed_response", message: `Malformed open orders for ${user}` };
+  }
+
+  return { ok: true, data: data as HyperliquidRawOpenOrder[] };
+}
+
+export async function fetchUserFills(user: string): Promise<HyperliquidFetchResult<HyperliquidRawFill[]>> {
+  const result = await postInfo<unknown>({ type: "userFills", user });
+  if (!result.ok) return result;
+
+  const data = result.data;
+  // Empty is normal ("no trade history yet"), never treated as malformed.
+  if (!Array.isArray(data) || !data.every((f) => f && typeof f.coin === "string" && typeof f.time === "number")) {
+    return { ok: false, reason: "malformed_response", message: `Malformed fills for ${user}` };
+  }
+
+  return { ok: true, data: data as HyperliquidRawFill[] };
+}

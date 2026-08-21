@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ProgressProvider } from "@/lib/progress-store";
 import { WalletProvider } from "@/lib/wallet/wallet-provider";
+import { WalletLinkSync } from "@/lib/wallet/wallet-link-sync";
 import { LocaleProvider } from "@/lib/i18n/locale-provider";
 import { NavigationHistoryProvider } from "@/lib/navigation/navigation-history-provider";
 import { AuthSessionProvider } from "@/components/auth/session-provider";
 import { FavoritesProvider } from "@/lib/favorites/favorites-provider";
 import { NotificationsProvider } from "@/lib/notifications/notifications-provider";
 import { PaperAccountProvider } from "@/lib/trading/paper-account-provider";
+import { HyperliquidAccountProvider } from "@/lib/hyperliquid/hyperliquid-account-provider";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://compassfinance.online"),
@@ -30,10 +32,13 @@ export default function RootLayout({
               <LocaleProvider>
                 <NavigationHistoryProvider>
                   <WalletProvider>
+                    <WalletLinkSync />
                     <FavoritesProvider>
                       <NotificationsProvider>
                         <PaperAccountProvider>
-                          <ProgressProvider>{children}</ProgressProvider>
+                          <HyperliquidAccountProvider>
+                            <ProgressProvider>{children}</ProgressProvider>
+                          </HyperliquidAccountProvider>
                         </PaperAccountProvider>
                       </NotificationsProvider>
                     </FavoritesProvider>

@@ -3,17 +3,44 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getInvestmentAccess } from "@/lib/learning/unlocks";
 import type { LearningProgress } from "@/lib/learning/types";
 
-// Structural guardrail: the investment-unlock system must stay 100%
-// learning-derived. This test fails the moment anyone adds a Hyperliquid
-// import to either file, regardless of what they'd do with it — a
-// behavioral-only test can't catch that, since neither function takes
-// market data as an input at all.
-describe("Hyperliquid integration never touches investment-unlock state", () => {
-  it("unlocks.ts and trading-service.ts import nothing Hyperliquid-related", () => {
-    const files = ["src/lib/learning/unlocks.ts", "src/server/services/trading-service.ts"];
+// Structural guardrail: the investment-unlock system AND Paper Trading
+// must stay 100% free of the Hyperliquid/wallet integration (Phase 1 read-
+// only market data, Phase 2 read-only account data). This test fails the
+// moment anyone adds a Hyperliquid import to any of these files,
+// regardless of what they'd do with it — a behavioral-only test can't
+// catch that, since none of these functions take market/account data as
+// an input at all.
+describe("Hyperliquid integration never touches Learning/Unlock/Paper Trading", () => {
+  it("unlocks.ts, trading-service.ts, and paper-trading-repository.ts import nothing Hyperliquid-related", () => {
+    const files = [
+      "src/lib/learning/unlocks.ts",
+      "src/server/services/trading-service.ts",
+      "src/server/repositories/paper-trading-repository.ts",
+    ];
     for (const f of files) {
       const src = readFileSync(f, "utf8");
       expect(src).not.toMatch(/hyperliquid/i);
+    }
+  });
+
+  it("paper-account-provider.tsx imports nothing from the wallet or Hyperliquid layers", () => {
+    const src = readFileSync("src/lib/trading/paper-account-provider.tsx", "utf8");
+    expect(src).not.toMatch(/hyperliquid/i);
+    expect(src).not.toMatch(/wallet/i);
+  });
+});
+
+// Symmetric guardrail in the other direction: the wallet layer must not
+// reach into Paper Trading/learning any more than trading reaches into
+// Hyperliquid — wallet-link-sync.tsx only ever talks to /api/user/wallet.
+describe("The wallet layer never touches Paper Trading or the learning/unlock system", () => {
+  it("wallet-provider.tsx and evm-wallet-provider.tsx import nothing paper/unlock/learning-related", () => {
+    const files = ["src/lib/wallet/wallet-provider.tsx", "src/lib/wallet/evm-wallet-provider.tsx"];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      expect(src).not.toMatch(/paper/i);
+      expect(src).not.toMatch(/unlock/i);
+      expect(src).not.toMatch(/learning/i);
     }
   });
 });

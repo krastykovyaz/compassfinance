@@ -10,7 +10,15 @@
 
 import { getOrFetch } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
-import { fetchMetaAndAssetCtxs, fetchCandleSnapshot, fetchL2Book } from "./client";
+import {
+  fetchMetaAndAssetCtxs,
+  fetchCandleSnapshot,
+  fetchL2Book,
+  fetchClearinghouseState,
+  fetchOpenOrders,
+  fetchUserFills,
+  type HyperliquidRawPosition,
+} from "./client";
 import { isChartRange, mapRangeToHyperliquidParams, type ChartRange } from "./range-mapping";
 import type {
   HyperliquidMarketSnapshot,
@@ -19,12 +27,19 @@ import type {
   HyperliquidCandlesResult,
   HyperliquidOrderBookLevel,
   HyperliquidOrderBookResult,
+  HyperliquidPosition,
+  HyperliquidAccountResult,
+  HyperliquidOpenOrdersResult,
+  HyperliquidFillsResult,
 } from "./types";
 
 export type { ChartRange };
 
 const MARKETS_CACHE_TTL_MS = 15_000;
 const ORDER_BOOK_CACHE_TTL_MS = 2_000;
+// Shorter than the market-list TTL — this is the user's own money, so a
+// tighter staleness bound is worth the extra upstream calls.
+const ACCOUNT_CACHE_TTL_MS = 10_000;
 
 function toNumber(value: string): number {
   const n = Number(value);
@@ -171,5 +186,153 @@ export async function getHyperliquidOrderBook(coin: string): Promise<Hyperliquid
   } catch (err) {
     const reason = err instanceof Error ? err.message : "Hyperliquid order book unavailable";
     return { status: "unavailable", coin, reason };
+  }
+}
+
+// --- Account (Phase 2) — read-only, address-keyed. No internal Compass
+// user id is ever passed into these functions or the upstream call; the
+// route above this layer only ever supplies a wallet address. ---
+
+/** "B" = bid/buy, "A" = ask/sell — Hyperliquid's own side convention. */
+function normalizeSide(raw: string): "BUY" | "SELL" | null {
+  if (raw === "B") return "BUY";
+  if (raw === "A") return "SELL";
+  return null;
+}
+
+/** Normalizes one raw position, or returns null (skip, log) if any
+ * required numeric field — including the nested leverage object — doesn't
+ * parse as expected. Never fabricates a value for a field that's missing. */
+function normalizePosition(raw: HyperliquidRawPosition): HyperliquidPosition | null {
+  const size = toNumber(raw.szi);
+  const unrealizedPnl = toNumber(raw.unrealizedPnl);
+  const marginUsed = toNumber(raw.marginUsed);
+  const positionValue = toNumber(raw.positionValue);
+  const entryPrice = raw.entryPx !== null ? toNumber(raw.entryPx) : null;
+  const liquidationPrice = raw.liquidationPx !== null ? toNumber(raw.liquidationPx) : null;
+  const leverage = typeof raw.leverage?.value === "number" && Number.isFinite(raw.leverage.value)
+    ? raw.leverage.value
+    : NaN;
+
+  const requiredFieldsOk = [size, unrealizedPnl, marginUsed, positionValue, leverage].every(
+    (n) => !Number.isNaN(n)
+  );
+  const optionalFieldsOk = (entryPrice === null || !Number.isNaN(entryPrice)) &&
+    (liquidationPrice === null || !Number.isNaN(liquidationPrice));
+
+  if (!requiredFieldsOk || !optionalFieldsOk) {
+    console.error(`[hyperliquid-service] skipping ${raw.coin}: non-numeric field in position`);
+    return null;
+  }
+
+  return { coin: raw.coin, size, entryPrice, leverage, liquidationPrice, unrealizedPnl, marginUsed, positionValue };
+}
+
+export async function getHyperliquidAccount(address: string): Promise<HyperliquidAccountResult> {
+  if (!address || !address.trim()) {
+    return { status: "unavailable", reason: "address is required" };
+  }
+  if (!isHyperliquidEnabled()) {
+    return { status: "unavailable", reason: "disabled" };
+  }
+
+  try {
+    const account = await getOrFetch(`hl:account:${address}`, ACCOUNT_CACHE_TTL_MS, async () => {
+      const fetched = await fetchClearinghouseState(address);
+      if (!fetched.ok) {
+        throw new Error(fetched.message);
+      }
+
+      const accountValue = toNumber(fetched.data.marginSummary.accountValue);
+      const withdrawableBalance = toNumber(fetched.data.withdrawable);
+      const totalMarginUsed = toNumber(fetched.data.marginSummary.totalMarginUsed);
+      if ([accountValue, withdrawableBalance, totalMarginUsed].some(Number.isNaN)) {
+        throw new Error(`Non-numeric account summary fields for ${address}`);
+      }
+
+      const positions = fetched.data.assetPositions
+        .map((ap) => normalizePosition(ap.position))
+        .filter((p): p is HyperliquidPosition => p !== null);
+
+      return { accountValue, withdrawableBalance, totalMarginUsed, positions, timestamp: Date.now() };
+    });
+
+    return { status: "ok", account };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "Hyperliquid account data unavailable";
+    return { status: "unavailable", reason };
+  }
+}
+
+export async function getHyperliquidOpenOrders(address: string): Promise<HyperliquidOpenOrdersResult> {
+  if (!address || !address.trim()) {
+    return { status: "unavailable", reason: "address is required" };
+  }
+  if (!isHyperliquidEnabled()) {
+    return { status: "unavailable", reason: "disabled" };
+  }
+
+  try {
+    const orders = await getOrFetch(`hl:orders:${address}`, ACCOUNT_CACHE_TTL_MS, async () => {
+      const fetched = await fetchOpenOrders(address);
+      if (!fetched.ok) {
+        throw new Error(fetched.message);
+      }
+      const result = [];
+      for (const raw of fetched.data) {
+        const side = normalizeSide(raw.side);
+        const price = toNumber(raw.limitPx);
+        const size = toNumber(raw.sz);
+        if (!side || Number.isNaN(price) || Number.isNaN(size)) {
+          console.error(`[hyperliquid-service] skipping order ${raw.oid}: unparseable field`);
+          continue;
+        }
+        result.push({ coin: raw.coin, side, price, size, orderId: raw.oid, timestamp: raw.timestamp });
+      }
+      return result;
+    });
+
+    return { status: "ok", orders };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "Hyperliquid open orders unavailable";
+    return { status: "unavailable", reason };
+  }
+}
+
+export async function getHyperliquidUserFills(address: string, limit = 20): Promise<HyperliquidFillsResult> {
+  if (!address || !address.trim()) {
+    return { status: "unavailable", reason: "address is required" };
+  }
+  if (!isHyperliquidEnabled()) {
+    return { status: "unavailable", reason: "disabled" };
+  }
+
+  try {
+    const fills = await getOrFetch(`hl:fills:${address}`, ACCOUNT_CACHE_TTL_MS, async () => {
+      const fetched = await fetchUserFills(address);
+      if (!fetched.ok) {
+        throw new Error(fetched.message);
+      }
+      const result = [];
+      for (const raw of fetched.data) {
+        const side = normalizeSide(raw.side);
+        const price = toNumber(raw.px);
+        const size = toNumber(raw.sz);
+        const closedPnl = toNumber(raw.closedPnl);
+        const fee = toNumber(raw.fee);
+        if (!side || [price, size, closedPnl, fee].some(Number.isNaN)) {
+          console.error(`[hyperliquid-service] skipping fill ${raw.oid}: unparseable field`);
+          continue;
+        }
+        result.push({ coin: raw.coin, side, price, size, closedPnl, fee, timestamp: raw.time });
+      }
+      // Newest first.
+      return result.sort((a, b) => b.timestamp - a.timestamp);
+    });
+
+    return { status: "ok", fills: fills.slice(0, limit) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "Hyperliquid trade history unavailable";
+    return { status: "unavailable", reason };
   }
 }

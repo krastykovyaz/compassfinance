@@ -50,3 +50,64 @@ export type HyperliquidCandlesResult =
 export type HyperliquidOrderBookResult =
   | { status: "ok"; book: HyperliquidOrderBook }
   | { status: "unavailable"; coin: string; reason: string };
+
+// ---------------------------------------------------------------------------
+// Account (Phase 2) — read-only, address-keyed. Never contains a private
+// key, seed phrase, or internal Compass user id; everything here is what
+// Hyperliquid itself reports as public account state for a given address.
+// ---------------------------------------------------------------------------
+
+export type HyperliquidPosition = {
+  /** Hyperliquid's own coin symbol — same identifier space as
+   * HyperliquidMarketSnapshot.assetId, no separate mapping needed. */
+  coin: string;
+  /** Signed size — negative is short. */
+  size: number;
+  entryPrice: number | null;
+  leverage: number;
+  /** null when Hyperliquid reports no liquidation price for this position
+   * (e.g. fully covered) — never computed/estimated here. */
+  liquidationPrice: number | null;
+  unrealizedPnl: number;
+  marginUsed: number;
+  positionValue: number;
+};
+
+export type HyperliquidAccountSnapshot = {
+  accountValue: number;
+  withdrawableBalance: number;
+  totalMarginUsed: number;
+  positions: HyperliquidPosition[];
+  timestamp: number;
+};
+
+export type HyperliquidOpenOrder = {
+  coin: string;
+  side: "BUY" | "SELL";
+  price: number;
+  size: number;
+  orderId: number;
+  timestamp: number;
+};
+
+export type HyperliquidFill = {
+  coin: string;
+  side: "BUY" | "SELL";
+  price: number;
+  size: number;
+  closedPnl: number;
+  fee: number;
+  timestamp: number;
+};
+
+export type HyperliquidAccountResult =
+  | { status: "ok"; account: HyperliquidAccountSnapshot }
+  | { status: "unavailable"; reason: string };
+
+export type HyperliquidOpenOrdersResult =
+  | { status: "ok"; orders: HyperliquidOpenOrder[] }
+  | { status: "unavailable"; reason: string };
+
+export type HyperliquidFillsResult =
+  | { status: "ok"; fills: HyperliquidFill[] }
+  | { status: "unavailable"; reason: string };

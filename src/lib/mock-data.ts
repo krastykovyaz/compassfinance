@@ -183,20 +183,16 @@ export const whatMovesIt: Record<
 // from actually-observed Yahoo Finance prices. See
 // src/app/position/[slug]/page.tsx.
 
-export const hyperliquidAccount = {
-  connected: true,
-  accountLabel: "compass.hl",
-  network: "Hyperliquid L1",
-};
+// hyperliquidAccount and the unused `wallet` mock object used to live
+// here. Both are gone as of the Hyperliquid Phase 2 milestone: Portfolio's
+// Hyperliquid panel now reads real, live wallet/account data (see
+// src/components/portfolio/hyperliquid-account-panel.tsx,
+// src/lib/wallet/wallet-provider.tsx, and
+// src/lib/hyperliquid/hyperliquid-account-provider.tsx) instead of this
+// static demo object.
 
 // Risk profile content now lives in src/lib/risk-profile/risk-profiles.ts,
 // and the user's selection is persisted in progress-store.tsx.
-
-export const wallet = {
-  address: "0x89...7F2a",
-  network: "Arbitrum",
-  usdcBalance: 1250.0,
-};
 
 // Milestone 24: `followedThemes` (a static demo array, superseded by the
 // real per-user interests shown just below on the Profile page) and

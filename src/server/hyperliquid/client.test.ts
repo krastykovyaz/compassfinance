@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchMeta, fetchMetaAndAssetCtxs, fetchCandleSnapshot, fetchL2Book } from "./client";
+import {
+  fetchMeta,
+  fetchMetaAndAssetCtxs,
+  fetchCandleSnapshot,
+  fetchL2Book,
+  fetchClearinghouseState,
+  fetchOpenOrders,
+  fetchUserFills,
+} from "./client";
 
 function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }) {
   return {
@@ -201,6 +209,138 @@ describe("fetchL2Book", () => {
   it("returns malformed_response when levels is missing or not a 2-element array", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ coin: "BTC", time: 1 })));
     const result = await fetchL2Book("BTC");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed_response");
+  });
+});
+
+describe("fetchClearinghouseState", () => {
+  const RAW_STATE = {
+    assetPositions: [
+      {
+        position: {
+          coin: "BTC",
+          szi: "0.5",
+          entryPx: "60000",
+          leverage: { type: "cross", value: 10 },
+          liquidationPx: "54000",
+          unrealizedPnl: "500",
+          marginUsed: "3000",
+          positionValue: "30000",
+        },
+        type: "oneWay",
+      },
+    ],
+    marginSummary: { accountValue: "10000", totalMarginUsed: "3000", totalNtlPos: "30000", totalRawUsd: "10000" },
+    withdrawable: "7000",
+    time: 12345,
+  };
+
+  it("returns the raw clearinghouse state on success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(RAW_STATE)));
+    const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.withdrawable).toBe("7000");
+      expect(result.data.assetPositions).toHaveLength(1);
+    }
+  });
+
+  it("returns ok for an address with zero positions — an empty account is not malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ ...RAW_STATE, assetPositions: [] })
+      )
+    );
+    const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.assetPositions).toHaveLength(0);
+  });
+
+  it("posts the user address, never any internal id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(RAW_STATE));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchClearinghouseState("0xabc");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ type: "clearinghouseState", user: "0xabc" });
+  });
+
+  it("returns malformed_response when marginSummary/withdrawable are missing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ assetPositions: [] })));
+    const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed_response");
+  });
+
+  it("returns rate_limited on a 429 response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { ok: false, status: 429 })));
+    const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("rate_limited");
+  });
+
+  it("returns network_error when fetch itself rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("network_error");
+  });
+});
+
+describe("fetchOpenOrders", () => {
+  it("returns the raw open orders on success", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse([{ coin: "BTC", limitPx: "60000", oid: 1, side: "B", sz: "0.1", timestamp: 123 }])
+      )
+    );
+    const result = await fetchOpenOrders("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toHaveLength(1);
+  });
+
+  it("returns ok with an empty array — no open orders is a normal state, not malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    const result = await fetchOpenOrders("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual([]);
+  });
+
+  it("returns malformed_response for a non-array response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({})));
+    const result = await fetchOpenOrders("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed_response");
+  });
+});
+
+describe("fetchUserFills", () => {
+  it("returns the raw fills on success", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse([
+          { coin: "BTC", side: "B", px: "60000", sz: "0.1", closedPnl: "0", fee: "1.2", time: 123, oid: 1 },
+        ])
+      )
+    );
+    const result = await fetchUserFills("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toHaveLength(1);
+  });
+
+  it("returns ok with an empty array — no trade history is a normal state, not malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    const result = await fetchUserFills("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual([]);
+  });
+
+  it("returns malformed_response for a non-array response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({})));
+    const result = await fetchUserFills("0xabc");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("malformed_response");
   });
