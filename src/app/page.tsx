@@ -14,6 +14,7 @@ import { ContinueLessonCard } from "@/components/home/continue-lesson-card";
 import { MarketOverview } from "@/components/home/market-overview";
 import { continueLesson } from "@/lib/mock-data";
 import { useProgress } from "@/lib/progress-store";
+import { useNotifications } from "@/lib/notifications/notifications-provider";
 import { usePaperAccount, usePerformanceHistory } from "@/lib/trading/paper-account-provider";
 import { accountToHoldings } from "@/lib/trading/holdings";
 import { sp500LessonSteps, sp500Quiz } from "@/lib/lesson-content";
@@ -112,6 +113,7 @@ export default function HomePage() {
   const cashBalance = account?.cashBalance ?? 0;
   const { points: performancePoints } = usePerformanceHistory("1D");
   const holdings = accountToHoldings(account).slice(0, 3);
+  const { unreadCount } = useNotifications();
 
   return (
     <AppShell>
@@ -123,12 +125,18 @@ export default function HomePage() {
           </div>
         }
         rightSlot={
-          <button
+          <Link
+            href="/notifications"
             aria-label={t("linkRows.notifications")}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-ink hover:bg-surface-2"
+            className="relative flex h-9 w-9 items-center justify-center rounded-full text-ink hover:bg-surface-2"
           >
             <Bell size={20} />
-          </button>
+            {unreadCount > 0 ? (
+              <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            ) : null}
+          </Link>
         }
       />
 

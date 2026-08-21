@@ -110,6 +110,14 @@ export async function placePaperTrade(
   }
   const price = quoteResult.quote.price;
 
+  // Captured inside the transaction below and used after it commits, as
+  // the dedup key for the trade-executed notification — assetId:side
+  // alone is NOT unique (a user can legitimately buy the same asset
+  // twice), so the trade's own row id is used instead. Mirrors the same
+  // outer-let-assigned-inside-a-transaction pattern learning-service.ts's
+  // completeLesson() already uses for its own derived/justCompleted state.
+  let tradeId: string | undefined;
+
   await prisma.$transaction(async (tx) => {
     const account = await getOrCreateAccount(tx, userId);
     const existingPosition = await getPosition(tx, account.id, assetId);
@@ -128,7 +136,7 @@ export async function placePaperTrade(
 
       await updateCashBalance(tx, account.id, account.cashBalance - cost);
       await upsertPosition(tx, account.id, assetId, newQuantity, newAverageEntryPrice);
-      await recordTrade(tx, {
+      const trade = await recordTrade(tx, {
         accountId: account.id,
         assetId,
         side: "BUY",
@@ -136,6 +144,7 @@ export async function placePaperTrade(
         executionPrice: price,
         realizedPnl: null,
       });
+      tradeId = trade.id;
       return;
     }
 
@@ -154,7 +163,7 @@ export async function placePaperTrade(
     } else {
       await upsertPosition(tx, account.id, assetId, remainingQuantity, existingPosition.averageEntryPrice);
     }
-    await recordTrade(tx, {
+    const trade = await recordTrade(tx, {
       accountId: account.id,
       assetId,
       side: "SELL",
@@ -162,9 +171,12 @@ export async function placePaperTrade(
       executionPrice: price,
       realizedPnl,
     });
+    tradeId = trade.id;
   });
 
-  await notifyUser(userId, "paper_trade_completed", `${assetId}:${side}`);
+  if (tradeId) {
+    await notifyUser(userId, "paper_trade_completed", tradeId, { assetId, tradeSide: side });
+  }
 
   return getAccountView(userId);
 }

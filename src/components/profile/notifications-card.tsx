@@ -7,7 +7,9 @@ import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CHANNELS,
   useNotificationPreferences,
+  type NotificationChannel,
 } from "@/lib/notifications/use-notification-preferences";
+import { subscribeToPush, unsubscribeFromPush } from "@/lib/notifications/use-push-subscription";
 
 const LABEL_KEY: Record<string, string> = {
   news: "notifications.news",
@@ -16,9 +18,8 @@ const LABEL_KEY: Record<string, string> = {
   achievements: "notifications.achievements",
 };
 
-const CHANNEL_LABEL_KEY: Record<string, string> = {
+const CHANNEL_LABEL_KEY: Record<NotificationChannel, string> = {
   push: "notifications.push",
-  email: "notifications.email",
 };
 
 function ToggleRow({
@@ -73,6 +74,23 @@ export function NotificationsCard() {
     );
   }
 
+  // Push permission is only ever requested here, as a direct result of
+  // this click — never on mount, never anywhere else (Notifications
+  // milestone, Section 3). Turning the toggle on subscribes this browser
+  // first; if permission is denied or push isn't supported, the
+  // preference is left off rather than silently claiming it's enabled.
+  async function onToggleChannel(channel: NotificationChannel) {
+    if (channel === "push") {
+      if (!channels.push) {
+        const granted = await subscribeToPush();
+        if (!granted) return;
+      } else {
+        await unsubscribeFromPush();
+      }
+    }
+    toggleChannel(channel);
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -86,7 +104,7 @@ export function NotificationsCard() {
               label={t(CHANNEL_LABEL_KEY[c])}
               checked={channels[c]}
               disabled={!loaded}
-              onToggle={() => toggleChannel(c)}
+              onToggle={() => onToggleChannel(c)}
             />
           ))}
         </Card>

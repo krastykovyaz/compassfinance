@@ -79,8 +79,11 @@ const FULLY_UNLOCKED_PROGRESS = {
   lastActivityAt: new Date().toISOString(),
 };
 
+let tradeIdSeq = 0;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  tradeIdSeq = 0;
   getServerLearningProgress.mockResolvedValue(FULLY_UNLOCKED_PROGRESS);
   repo.getOrCreateAccount.mockResolvedValue(ACCOUNT);
   repo.getPositions.mockResolvedValue([]);
@@ -88,6 +91,10 @@ beforeEach(() => {
   repo.getLatestSnapshot.mockResolvedValue(null);
   repo.createSnapshot.mockResolvedValue({});
   repo.getSnapshotsSince.mockResolvedValue([]);
+  // recordTrade returns a real, unique row id per call — placePaperTrade
+  // uses this as the notification dedup key (see below), so every mocked
+  // trade needs its own id the same way the real DB would generate one.
+  repo.recordTrade.mockImplementation(async () => ({ id: `trade-${++tradeIdSeq}` }));
 });
 
 describe("placePaperTrade — investment-unlock enforcement (Milestone 23)", () => {
@@ -444,5 +451,36 @@ describe("getPerformanceHistory", () => {
 
     expect(points).toHaveLength(1);
     expect(points[0].v).toBe(1000);
+  });
+});
+
+describe("placePaperTrade — notification dedup key (regression)", () => {
+  it("uses the trade's own id, not `${assetId}:${side}`, so two BUYs of the same asset each notify", async () => {
+    getQuote.mockResolvedValue({ slug: "aapl", status: "ok", quote: { price: 100 } });
+    repo.getPosition.mockResolvedValue(null);
+    getQuotes.mockResolvedValue([]);
+    repo.getPositions.mockResolvedValue([]);
+
+    await placePaperTrade("user-1", "aapl", "BUY", 1);
+    repo.getPosition.mockResolvedValue({
+      id: "p1",
+      accountId: "acct-1",
+      assetId: "aapl",
+      quantity: 1,
+      averageEntryPrice: 100,
+    });
+    await placePaperTrade("user-1", "aapl", "BUY", 1);
+
+    expect(notifyUser).toHaveBeenCalledTimes(2);
+    const firstSourceId = notifyUser.mock.calls[0][2];
+    const secondSourceId = notifyUser.mock.calls[1][2];
+    expect(firstSourceId).not.toBe(secondSourceId); // never `${assetId}:${side}` for both
+    expect(notifyUser).toHaveBeenNthCalledWith(
+      1,
+      "user-1",
+      "paper_trade_completed",
+      expect.any(String),
+      { assetId: "aapl", tradeSide: "BUY" }
+    );
   });
 });
