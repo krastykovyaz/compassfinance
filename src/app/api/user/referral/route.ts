@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
 import { getOrCreateReferralCode, getReferralCount } from "@/server/repositories/referral-repository";
-import { buildReferralUrl } from "@/lib/referrals/urls";
+import { buildReferralUrl, getRequestOrigin } from "@/lib/referrals/urls";
 
 export async function GET(req: NextRequest) {
   return withApiErrorHandling(async () => {
@@ -14,6 +14,6 @@ export async function GET(req: NextRequest) {
       getOrCreateReferralCode(userId),
       getReferralCount(userId),
     ]);
-    return { code, url: buildReferralUrl(req.nextUrl.origin, code), referralCount };
+    return { code, url: buildReferralUrl(getRequestOrigin(req), code), referralCount };
   });
 }
