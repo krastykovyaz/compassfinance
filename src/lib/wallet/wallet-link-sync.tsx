@@ -17,25 +17,48 @@ import { useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useWallet } from "./wallet-provider";
 
+export type WalletLinkPayload = { address: string; chain: string };
+
+/**
+ * Pure "should we sync right now, and with what payload" decision — pulled
+ * out of the effect below so the wallet↔Hyperliquid sync trigger logic is
+ * directly testable without rendering anything. Returns null whenever
+ * there's nothing to persist yet (signed out, disconnected, or no chain
+ * info available at all).
+ */
+export function getWalletLinkPayload(params: {
+  sessionStatus: string;
+  isConnected: boolean;
+  address: string | null;
+  chainId: number | null;
+  chainName: string | null;
+}): WalletLinkPayload | null {
+  const { sessionStatus, isConnected, address, chainId, chainName } = params;
+  if (sessionStatus !== "authenticated" || !isConnected || !address) return null;
+
+  const chain = chainName ?? (chainId !== null ? String(chainId) : null);
+  if (!chain) return null;
+
+  return { address, chain };
+}
+
 export function WalletLinkSync(): null {
   const { status } = useSession();
   const { isConnected, address, chainId, chainName } = useWallet();
   const lastSyncedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (status !== "authenticated" || !isConnected || !address) return;
+    const payload = getWalletLinkPayload({ sessionStatus: status, isConnected, address, chainId, chainName });
+    if (!payload) return;
 
-    const chain = chainName ?? (chainId !== null ? String(chainId) : null);
-    if (!chain) return;
-
-    const key = `${address}:${chain}`;
+    const key = `${payload.address}:${payload.chain}`;
     if (lastSyncedRef.current === key) return;
     lastSyncedRef.current = key;
 
     fetch("/api/user/wallet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, chain }),
+      body: JSON.stringify(payload),
     }).catch(() => {
       // Best-effort background sync — a failure here must never affect
       // the wallet UI/state itself. Allow a retry on the next relevant

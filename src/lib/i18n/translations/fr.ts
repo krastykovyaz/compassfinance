@@ -117,6 +117,8 @@ const fr: Dictionary = {
     checkWalletRequest: "Vérifiez votre portefeuille pour la demande de connexion",
     connectWalletDescription: "Connectez un portefeuille EVM pour voir votre solde USDC",
     unknownNetwork: "Réseau inconnu",
+    unsupportedNetwork: "Réseau non pris en charge",
+    unsupportedNetworkDescription: "Passez à Ethereum, Arbitrum, Base, Optimism ou Polygon pour voir votre solde USDC.",
     balanceUnavailable: "Solde indisponible",
     refreshBalance: "Actualiser le solde",
     usdcLabel: "portefeuille (USDC)",

@@ -117,6 +117,8 @@ const ru: Dictionary = {
     checkWalletRequest: "Проверьте кошелёк — там запрос на подключение",
     connectWalletDescription: "Подключите EVM-кошелёк, чтобы увидеть баланс USDC",
     unknownNetwork: "Неизвестная сеть",
+    unsupportedNetwork: "Неподдерживаемая сеть",
+    unsupportedNetworkDescription: "Переключитесь на Ethereum, Arbitrum, Base, Optimism или Polygon, чтобы увидеть баланс USDC.",
     balanceUnavailable: "Баланс недоступен",
     refreshBalance: "Обновить баланс",
     usdcLabel: "кошелёк (USDC)",

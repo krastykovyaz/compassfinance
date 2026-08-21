@@ -20,6 +20,7 @@ import {
   getApprovedAccounts,
   getChainId,
   getUsdcBalance,
+  isSupportedChain,
   isUserRejectedError,
   isWalletAvailable,
   requestAccounts,
@@ -35,6 +36,7 @@ const initialState: WalletState = {
   address: null,
   chainId: null,
   chainName: null,
+  isUnsupportedChain: false,
   usdcBalance: null,
   isConnected: false,
   isConnecting: false,
@@ -74,6 +76,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         address,
         chainId,
         chainName,
+        isUnsupportedChain: !isSupportedChain(chainId),
         isConnected: true,
         isConnecting: false,
         error: null,
@@ -113,7 +116,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setState((s) => {
         if (!s.address) return s;
         const chainName = SUPPORTED_CHAINS[chainId]?.name ?? `Chain ${chainId}`;
-        return { ...s, chainId, chainName };
+        return { ...s, chainId, chainName, isUnsupportedChain: !isSupportedChain(chainId) };
       });
     });
     const unsubDisconnect = subscribeDisconnect(() => setState(initialState));

@@ -49,6 +49,10 @@ export const SUPPORTED_CHAINS: Record<number, SupportedChain> = {
   },
 };
 
+export function isSupportedChain(chainId: number): boolean {
+  return chainId in SUPPORTED_CHAINS;
+}
+
 export function getInjectedProvider(): Eip1193Provider | null {
   if (typeof window === "undefined") return null;
   return window.ethereum ?? null;

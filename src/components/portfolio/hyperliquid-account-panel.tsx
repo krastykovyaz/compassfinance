@@ -22,7 +22,7 @@ function Skeleton() {
 
 export function HyperliquidAccountPanel() {
   const { t } = useTranslation();
-  const { status: walletStatus, address, isConnecting, connect } = useWallet();
+  const { status: walletStatus, address, isConnecting, isUnsupportedChain, connect } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage } = useHyperliquidAccount();
 
   // Not connected — the wallet layer is generic EVM and works regardless
@@ -105,6 +105,13 @@ export function HyperliquidAccountPanel() {
           {t("hyperliquidAccount.viewOnHyperliquid")} <ExternalLink size={13} />
         </a>
       </div>
+
+      {/* Informational only — Hyperliquid account data is address-only
+          and chain-agnostic, so an unsupported EVM chain in the connected
+          wallet never gates or hides anything below this note. */}
+      {isUnsupportedChain ? (
+        <p className="mt-1.5 text-[11px] text-dark-ink-muted">{t("wallet.unsupportedNetwork")}</p>
+      ) : null}
 
       <div className="mt-3 grid grid-cols-2 gap-3">
         <div>

@@ -28,6 +28,11 @@ export type WalletState = {
   address: string | null;
   chainId: number | null;
   chainName: string | null;
+  /** True once connected to a chain outside SUPPORTED_CHAINS — the wallet
+   * connection itself is still valid, but USDC balance can't be read (no
+   * known token address for that chain). Never affects Hyperliquid account
+   * data, which is address-only and chain-agnostic. */
+  isUnsupportedChain: boolean;
   usdcBalance: number | null;
   isConnected: boolean;
   isConnecting: boolean;

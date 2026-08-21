@@ -120,6 +120,8 @@ const en = {
     checkWalletRequest: "Check your wallet for a connection request",
     connectWalletDescription: "Connect an EVM wallet to see your USDC balance",
     unknownNetwork: "Unknown network",
+    unsupportedNetwork: "Unsupported network",
+    unsupportedNetworkDescription: "Switch to Ethereum, Arbitrum, Base, Optimism, or Polygon to see your USDC balance.",
     balanceUnavailable: "Balance unavailable",
     refreshBalance: "Refresh balance",
     usdcLabel: "wallet (USDC)",
