@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f2f5;
+  --border: #e7e9ee;
+  --ink: #0e1116;
+  --ink-muted: #6b7280;
+  --ink-faint: #9ca3af;
+
+  --dark-card: #14171f;
+  --dark-card-2: #1d2130;
+  --dark-border: #2a2f3d;
+  --dark-ink: #f5f6f8;
+  --dark-ink-muted: #9aa0ae;
+
+  --positive: #16a34a;
+  --positive-bg: #e7f6ec;
+  --negative: #dc2626;
+  --negative-bg: #fdeaea;
+
+  --purple: #7c3aed;
+  --purple-bg: #f1eafe;
+  --blue: #2563eb;
+  --blue-bg: #e8f0fe;
+
+  --radius-card: 20px;
+  --radius-pill: 999px;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-dark-card: var(--dark-card);
+  --color-dark-card-2: var(--dark-card-2);
+  --color-dark-border: var(--dark-border);
+  --color-dark-ink: var(--dark-ink);
+  --color-dark-ink-muted: var(--dark-ink-muted);
+
+  --color-positive: var(--positive);
+  --color-positive-bg: var(--positive-bg);
+  --color-negative: var(--negative);
+  --color-negative-bg: var(--negative-bg);
+
+  --color-purple: var(--purple);
+  --color-purple-bg: var(--purple-bg);
+  --color-blue: var(--blue);
+  --color-blue-bg: var(--blue-bg);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+html {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

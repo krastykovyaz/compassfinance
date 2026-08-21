@@ -1,0 +1,418 @@
+// Compass — Milestone 11 database schema.
+//
+// SQLite for local development (see DATABASE_URL in .env.example). Written
+// to be portable to PostgreSQL later — see "PostgreSQL migration" in the
+// README. Rules followed throughout:
+//   - no SQLite-specific types/functions
+//   - all relations are explicit, all user-owned tables key off User.id
+//   - every table a user can mutate more than once has a unique constraint
+//     that makes the mutation idempotent (favorite twice -> one row, etc.)
+
+generator client {
+  provider   = "prisma-client"
+  engineType = "client"
+  output     = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js (NextAuth v5) core models — the standard Prisma adapter shape.
+// https://authjs.dev/getting-started/adapters/prisma
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Compass profile (Section 9) -----------------------------------------
+  locale                String?   // "en" | "fr" | "ru" — validated in service layer
+  riskProfileId         String?   // one of the canonical risk-profile ids — validated, never arbitrary
+  onboardingCompletedAt DateTime?
+
+  // --- Referrals (Milestone 24) ---------------------------------------------
+  // referralCode is generated lazily on first request (see
+  // referral-repository.ts) and never regenerated once set. referredByUserId
+  // is set exactly once, at account-creation time (see auth.ts's
+  // events.createUser) — it starts null and a null check guards against ever
+  // overwriting an already-attributed user, which is what makes duplicate
+  // attribution structurally impossible, not just checked-for.
+  referralCode     String? @unique
+  referredByUserId String?
+  referredBy       User?   @relation("Referrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
+  referrals        User[]  @relation("Referrals")
+
+  accounts Account[]
+  sessions Session[]
+  wallets  WalletIdentity[]
+
+  interests          UserInterest[]
+  learningProgress   UserLearningProgress[]
+  quizResults        UserQuizResult[]
+  xpEvents           UserXPEvent[]
+  achievements       UserAchievement[]
+  assetUnlocks       UserAssetUnlock[]
+  favorites          UserFavoriteAsset[]
+  notificationPrefs  UserNotificationPreference[]
+  stats              UserLearningStats?
+  paperAccount       PaperAccount?
+  achievementShares  AchievementShare[]
+
+  @@map("users")
+}
+
+model Account {
+  id                       String  @id @default(cuid())
+  userId                   String
+  type                     String
+  provider                 String
+  providerAccountId        String
+  refresh_token            String?
+  access_token             String?
+  expires_at               Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String?
+  session_state            String?
+  refresh_token_expires_in Int?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Used by both the OAuth flow and passwordless email (magic-link/OTP) flow.
+// Tokens are stored hashed by the auth layer — never plaintext (Section 4).
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Paper trading (Milestone 16) — one account per user, real cash/positions.
+// Replaces the old sp500-only, XP-event-only "practice trade" mechanism:
+// this is a real, quantity-based, multi-asset BUY/SELL ledger that Home,
+// Portfolio, Position, and Markets all read from as the single source of
+// truth. Current prices are NEVER stored here — always fetched live from
+// the market-data service (src/server/market/service.ts) at read time, so
+// portfolio/position values can't drift from real prices.
+// ---------------------------------------------------------------------------
+
+model PaperAccount {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  cashBalance Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  positions PaperPosition[]
+  trades    PaperTrade[]
+  snapshots PaperAccountSnapshot[]
+
+  @@map("paper_accounts")
+}
+
+// A real, recorded portfolio-value data point — never a fabricated/
+// interpolated one. Written opportunistically (throttled, see
+// trading-service.ts's maybeRecordSnapshot) whenever the account is read
+// or a trade executes, so history accumulates purely from actual usage.
+// This is what Home's and Portfolio's performance charts are built from
+// instead of the old generateSeries() mock sine-wave.
+model PaperAccountSnapshot {
+  id             String   @id @default(cuid())
+  accountId      String
+  portfolioValue Float
+  cashBalance    Float
+  createdAt      DateTime @default(now())
+
+  account PaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@map("paper_account_snapshots")
+}
+
+// One row per (account, asset) currently held — deleted once quantity
+// reaches zero rather than kept around at quantity 0, so "does the user
+// own this asset" is just "does a row exist" everywhere (Markets' Owned
+// filter, the Position page, etc.).
+model PaperPosition {
+  id                String   @id @default(cuid())
+  accountId         String
+  assetId           String   // canonical asset id, e.g. "sp500", "btc" — see src/lib/assets/catalog.ts
+  quantity          Float
+  averageEntryPrice Float
+  updatedAt         DateTime @updatedAt
+
+  account PaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, assetId])
+  @@index([accountId])
+  @@map("paper_positions")
+}
+
+model PaperTrade {
+  id             String   @id @default(cuid())
+  accountId      String
+  assetId        String
+  side           String   // "BUY" | "SELL" — validated in the trading service, never trusted raw from a client
+  quantity       Float
+  executionPrice Float
+  // Only ever set on a SELL (realized gain/loss for that specific sell).
+  // Unrealized P&L on still-open positions is always computed live from
+  // the current quote, never stored.
+  realizedPnl    Float?
+  createdAt      DateTime @default(now())
+
+  account PaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([accountId, assetId])
+  @@map("paper_trades")
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Achievement sharing (Milestone 24) — a share is only ever created after
+// the server has independently verified the achievement/unlock is real
+// (see achievement-sharing-service.ts): this table records that a real
+// event was shared, it is never the thing that GRANTS the achievement.
+// The public share page (/share/achievement/[token]) reads only this
+// table plus the asset catalog — never portfolio value, holdings, or
+// trading history — so there is no way for a share link to leak private
+// account data.
+// ---------------------------------------------------------------------------
+
+model AchievementShare {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String // canonical AchievementId — see src/lib/learning/achievements.ts
+  assetId       String? // present for an investment-unlock share, absent for a pure achievement share
+  shareToken    String   @unique
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("achievement_shares")
+}
+
+// ---------------------------------------------------------------------------
+// Wallet — future-ready only (Section 18). Public identity data only.
+// ---------------------------------------------------------------------------
+
+model WalletIdentity {
+  id         String    @id @default(cuid())
+  userId     String
+  address    String
+  chain      String
+  createdAt  DateTime  @default(now())
+  verifiedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([address, chain])
+  @@index([userId])
+  @@map("wallet_identities")
+}
+
+// ---------------------------------------------------------------------------
+// Interests / followed themes (Section 10)
+// ---------------------------------------------------------------------------
+
+model UserInterest {
+  id        String   @id @default(cuid())
+  userId    String
+  key       String   // canonical interest id — see src/lib/interests/interests.ts
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_interests")
+}
+
+// ---------------------------------------------------------------------------
+// Learning progress (Section 11) — one row per (user, asset/course).
+// ---------------------------------------------------------------------------
+
+enum LessonCompletionState {
+  IN_PROGRESS
+  COMPLETED
+}
+
+model UserLearningProgress {
+  id              String                 @id @default(cuid())
+  userId          String
+  assetId         String                 // canonical asset/course id, e.g. "sp500", "aapl"
+  stepIndex       Int                    @default(0)
+  completionState LessonCompletionState  @default(IN_PROGRESS)
+  startedAt       DateTime               @default(now())
+  completedAt     DateTime?
+  lastActivityAt  DateTime               @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assetId])
+  @@index([userId])
+  @@map("user_learning_progress")
+}
+
+// ---------------------------------------------------------------------------
+// Quiz results (Section 12) — server-graded, never trusts a client `passed`.
+// ---------------------------------------------------------------------------
+
+model UserQuizResult {
+  id                 String   @id @default(cuid())
+  userId             String
+  assetId            String   // canonical asset/course id
+  attemptId          String   // client-generated idempotency key for one submission
+  score              Int
+  totalQuestions     Int
+  passed             Boolean
+  conceptPerformance String?  // JSON-encoded per-concept breakdown, optional
+  completedAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, attemptId])
+  @@index([userId, assetId])
+  @@map("user_quiz_results")
+}
+
+// ---------------------------------------------------------------------------
+// XP — immutable, server-controlled ledger (Section 13).
+// ---------------------------------------------------------------------------
+
+model UserXPEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String   // "lesson_completed" | "quiz_completed" | "correct_answer" | "first_investment" | "achievement_unlocked" | "asset_path_completed"
+  sourceId  String   // e.g. assetId, `${assetId}:${questionId}`, achievementId
+  amount    Int
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The core idempotency guarantee: the same (user, eventType, sourceId)
+  // can never be inserted twice, so replaying a submission can't duplicate XP.
+  @@unique([userId, eventType, sourceId])
+  @@index([userId])
+  @@map("user_xp_events")
+}
+
+// ---------------------------------------------------------------------------
+// Achievements (Section 14) — canonical definitions stay in application code
+// (src/lib/learning/achievements.ts); only unlock state is persisted.
+// ---------------------------------------------------------------------------
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String   // matches AchievementId in learning/types.ts
+  unlockedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@map("user_achievements")
+}
+
+// ---------------------------------------------------------------------------
+// Asset unlocks (Section 15) — canonical AssetUnlockDefinition stays in code.
+// ---------------------------------------------------------------------------
+
+model UserAssetUnlock {
+  id         String   @id @default(cuid())
+  userId     String
+  assetId    String
+  unlockedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assetId])
+  @@index([userId])
+  @@map("user_asset_unlocks")
+}
+
+// ---------------------------------------------------------------------------
+// Favorites / watchlist (Section 16) — real persistence, no Hyperliquid dep.
+// ---------------------------------------------------------------------------
+
+model UserFavoriteAsset {
+  id        String   @id @default(cuid())
+  userId    String
+  assetId   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assetId])
+  @@index([userId])
+  @@map("user_favorite_assets")
+}
+
+// ---------------------------------------------------------------------------
+// Notification preferences (Section 17) — preferences only, no delivery.
+// ---------------------------------------------------------------------------
+
+model UserNotificationPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  category  String   // canonical category id: "news" | "priceAlerts" | "learning" | "achievements"
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@map("user_notification_preferences")
+}
+
+// ---------------------------------------------------------------------------
+// Denormalized aggregate stats (streaks etc.) — mirrors the fields
+// progress-store.tsx already tracks client-side, so a server-computed
+// LearningProgress snapshot has everything deriveLearningProgress() needs.
+// ---------------------------------------------------------------------------
+
+model UserLearningStats {
+  userId              String    @id
+  currentStreak       Int       @default(0)
+  longestStreak       Int       @default(0)
+  lastActivityAt      DateTime?
+  assetsExploredSlugs String    @default("[]") // JSON-encoded string[]
+  updatedAt           DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_learning_stats")
+}
