@@ -64,14 +64,13 @@ export default function ProfilePage() {
     };
   }, [status]);
 
-  // Real summary of which delivery channels are actually enabled —
-  // Milestone 25: this app now has a real (if undelivered) push/email
-  // channel-preferences layer, so this reads that state instead of the
-  // old content-category count. Never a hardcoded "Push, email".
+  // Real summary of which delivery channels are actually enabled — this
+  // app has a real push channel-preferences layer (Notifications
+  // milestone; Email was removed — there is no email delivery
+  // implementation), so this reads that state. Never a hardcoded string.
   const enabledChannelsSummary = notificationsLoaded
     ? formatEnabledChannelsSummary(notificationChannels, {
         push: t("notifications.push"),
-        email: t("notifications.email"),
       })
     : null;
 

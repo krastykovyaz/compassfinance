@@ -6,6 +6,7 @@ import { LocaleProvider } from "@/lib/i18n/locale-provider";
 import { NavigationHistoryProvider } from "@/lib/navigation/navigation-history-provider";
 import { AuthSessionProvider } from "@/components/auth/session-provider";
 import { FavoritesProvider } from "@/lib/favorites/favorites-provider";
+import { NotificationsProvider } from "@/lib/notifications/notifications-provider";
 import { PaperAccountProvider } from "@/lib/trading/paper-account-provider";
 
 export const metadata: Metadata = {
@@ -30,9 +31,11 @@ export default function RootLayout({
                 <NavigationHistoryProvider>
                   <WalletProvider>
                     <FavoritesProvider>
-                      <PaperAccountProvider>
-                        <ProgressProvider>{children}</ProgressProvider>
-                      </PaperAccountProvider>
+                      <NotificationsProvider>
+                        <PaperAccountProvider>
+                          <ProgressProvider>{children}</ProgressProvider>
+                        </PaperAccountProvider>
+                      </NotificationsProvider>
                     </FavoritesProvider>
                   </WalletProvider>
                 </NavigationHistoryProvider>

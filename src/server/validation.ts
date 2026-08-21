@@ -30,11 +30,34 @@ export function isValidNotificationCategory(value: string): value is Notificatio
 // Delivery channels (Milestone 25) — deliberately a separate namespace from
 // NOTIFICATION_CATEGORIES above: categories are "what kind of thing", these
 // are "how it would reach you". Stored in the same UserNotificationPreference
-// table (category = "channel:push" / "channel:email") rather than a second
-// table, so there's still exactly one notification-preferences state.
-export const NOTIFICATION_CHANNELS = ["push", "email"] as const;
+// table (category = "channel:push") rather than a second table, so there's
+// still exactly one notification-preferences state.
+//
+// Notifications milestone: Email is deliberately NOT a valid channel —
+// there is no email delivery implementation yet, and this array is the
+// single source of truth every other "push"/"email" list in the codebase
+// derives from, so narrowing it here removes Email everywhere at once
+// (repository CHANNEL_DEFAULTS, the client hook, the Settings UI) rather
+// than needing a second "is email actually enabled" flag.
+export const NOTIFICATION_CHANNELS = ["push"] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
 export function isValidNotificationChannel(value: string): value is NotificationChannel {
   return (NOTIFICATION_CHANNELS as readonly string[]).includes(value);
+}
+
+// Real product events the notification center persists rows for (see
+// notification-events.ts). Streak milestones deliberately have no separate
+// event here — they're already modeled as the SEVEN_DAY_STREAK achievement
+// (src/lib/learning/achievements.ts) and go through achievement_earned.
+export const NOTIFICATION_EVENT_TYPES = [
+  "learning_completed",
+  "investment_unlocked",
+  "achievement_earned",
+  "paper_trade_completed",
+] as const;
+export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
+
+export function isValidNotificationEventType(value: string): value is NotificationEventType {
+  return (NOTIFICATION_EVENT_TYPES as readonly string[]).includes(value);
 }

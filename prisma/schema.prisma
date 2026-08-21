@@ -62,6 +62,8 @@ model User {
   assetUnlocks       UserAssetUnlock[]
   favorites          UserFavoriteAsset[]
   notificationPrefs  UserNotificationPreference[]
+  notifications      Notification[]
+  pushSubscriptions  PushSubscription[]
   stats              UserLearningStats?
   paperAccount       PaperAccount?
   achievementShares  AchievementShare[]
@@ -396,6 +398,67 @@ model UserNotificationPreference {
   @@unique([userId, category])
   @@index([userId])
   @@map("user_notification_preferences")
+}
+
+// ---------------------------------------------------------------------------
+// Notification center (Notifications milestone) — real, persisted
+// notification rows. Separate from UserNotificationPreference above: that
+// table is "would this user want to hear about X", this table is "X
+// actually happened and here's the record of telling them." A row here is
+// created exactly once per real event regardless of channel preference —
+// push delivery is a best-effort side effect layered on top, never the
+// other way around. Source of truth is always a real server-side event
+// (lesson completion, unlock, trade, achievement) — never mock/client state.
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  type   String // NotificationEventType — see src/server/validation.ts
+  // Dedup key: what makes "the same event processed twice" collapse into
+  // one row instead of two. Meaning depends on type — see
+  // notification-events.ts for the exact per-type value used:
+  //   learning_completed / investment_unlocked -> the assetId
+  //   achievement_earned                       -> the achievementId
+  //   paper_trade_completed                    -> the real PaperTrade.id
+  //   (assetId alone is NOT unique per trade — a user can legitimately buy
+  //   the same asset twice, so the trade's own id is used instead)
+  sourceId      String
+  assetId       String? // populated for learning_completed / investment_unlocked / paper_trade_completed
+  achievementId String? // populated for achievement_earned only
+  tradeSide     String? // "BUY" | "SELL" — populated for paper_trade_completed only
+  readAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, sourceId])
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Web Push subscriptions — one row per browser/device the user has granted
+// push permission on. endpoint/keys are opaque push-service credentials,
+// never anything that identifies message content (Section 7: no email/
+// internal ids/portfolio data ever flow through a push payload).
+// ---------------------------------------------------------------------------
+
+model PushSubscription {
+  id         String   @id @default(cuid())
+  userId     String
+  endpoint   String   @unique
+  p256dh     String // subscription public key
+  auth       String // subscription auth secret
+  userAgent  String? // diagnostic only, never surfaced to any other user
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
 }
 
 // ---------------------------------------------------------------------------

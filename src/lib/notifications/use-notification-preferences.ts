@@ -20,17 +20,18 @@ const DEFAULTS: Record<NotificationCategory, boolean> = {
 };
 
 // Delivery channels (Milestone 25) — separate from the content categories
-// above. There is no push/email delivery infrastructure configured yet;
-// these toggles persist the user's real preference and gate the
-// event-integration layer (see notification-events.ts server-side), they
-// never imply a message was actually sent.
-export type NotificationChannel = "push" | "email";
+// above. Email is deliberately NOT a channel: there is no email delivery
+// implementation, so it's never shown as available (Notifications
+// milestone, Section 4). These toggles persist the user's real preference
+// and gate the event-integration layer (see notification-events.ts
+// server-side) — "on" doesn't by itself imply a message was sent, that
+// still depends on having a valid push subscription.
+export type NotificationChannel = "push";
 
-export const NOTIFICATION_CHANNELS: NotificationChannel[] = ["push", "email"];
+export const NOTIFICATION_CHANNELS: NotificationChannel[] = ["push"];
 
 const CHANNEL_DEFAULTS: Record<NotificationChannel, boolean> = {
   push: true,
-  email: true,
 };
 
 /**
