@@ -1,7 +1,6 @@
 "use client";
 
 import { Eye } from "lucide-react";
-import Link from "next/link";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
@@ -71,15 +70,7 @@ export default function PortfolioPage() {
         </Card>
 
         <Card>
-          <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold text-ink">{t("portfolio.holdings")}</h2>
-            <Link
-              href="/portfolio"
-              className="rounded text-[13px] font-medium text-blue focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue"
-            >
-              {t("general.seeAll")}
-            </Link>
-          </div>
+          <h2 className="text-[15px] font-semibold text-ink">{t("portfolio.holdings")}</h2>
           {holdings.length > 0 ? (
             <HoldingsList holdings={holdings} />
           ) : (
