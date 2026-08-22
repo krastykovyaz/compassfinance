@@ -10,8 +10,9 @@ import { NewsItem } from "./news-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 
 // Polling our own cached route is cheap and doesn't touch Marketaux — the
-// route's own 20-minute TTL is what actually gates upstream requests. This
-// just lets an open tab pick up a cache refresh without a manual reload.
+// route's own multi-hour TTL (see news-cache.ts) is what actually gates
+// upstream requests. This just lets an open tab pick up a cache refresh
+// without a manual reload.
 const CLIENT_POLL_MS = 5 * 60 * 1000;
 
 type NewsApiResponse = {

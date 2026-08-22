@@ -84,6 +84,7 @@ const en = {
     filterStocks: "U.S. Stocks",
     filterIndices: "Indices",
     filterEarnings: "Earnings",
+    loadMore: "Load more",
   },
   profile: {
     profile: "Profile",

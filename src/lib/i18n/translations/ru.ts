@@ -81,6 +81,7 @@ const ru: Dictionary = {
     filterStocks: "Акции США",
     filterIndices: "Индексы",
     filterEarnings: "Отчётность",
+    loadMore: "Показать ещё",
   },
   profile: {
     profile: "Профиль",

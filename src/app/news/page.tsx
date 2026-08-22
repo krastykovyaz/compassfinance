@@ -14,8 +14,11 @@ import { useProgress } from "@/lib/progress-store";
 import { sortNewsByInterest } from "@/lib/interests/interests";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 
+const PAGE_SIZE = 3;
+
 export default function NewsPage() {
   const [filter, setFilter] = useState<NewsFilter>("all");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const { items, isLoading, error, degraded, refresh } = useNews();
   const { state } = useProgress();
   const { t } = useTranslation();
@@ -36,6 +39,13 @@ export default function NewsPage() {
     () => sortNewsByInterest(filtered, state.interests),
     [filtered, state.interests]
   );
+  const visible = prioritized.slice(0, visibleCount);
+  const hasMore = visibleCount < prioritized.length;
+
+  function handleFilterChange(next: NewsFilter) {
+    setFilter(next);
+    setVisibleCount(PAGE_SIZE); // switching categories starts the "load more" reveal over
+  }
 
   return (
     <AppShell>
@@ -44,7 +54,7 @@ export default function NewsPage() {
       <div className="space-y-4 px-5">
         <p className="text-[13px] font-medium text-ink-muted">{t("news.forYourPortfolio")}</p>
 
-        <FilterChips options={newsFilters} value={filter} onChange={setFilter} />
+        <FilterChips options={newsFilters} value={filter} onChange={handleFilterChange} />
 
         {degraded && !error ? (
           <p className="text-xs text-ink-faint">{t("news.showingRecent")}</p>
@@ -64,13 +74,21 @@ export default function NewsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {prioritized.map((item) => (
+            {visible.map((item) => (
               <NewsCard key={item.id} item={item} />
             ))}
             {prioritized.length === 0 ? (
               <p className="py-10 text-center text-[14px] text-ink-muted">
                 {t("news.noNews")}
               </p>
+            ) : null}
+            {hasMore ? (
+              <button
+                onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                className="w-full rounded-2xl border border-border py-3 text-[13px] font-medium text-ink-muted active:opacity-80"
+              >
+                {t("news.loadMore")}
+              </button>
             ) : null}
           </div>
         )}
