@@ -15,3 +15,10 @@ const HYPERLIQUID_ASSET_MAP: Partial<Record<AssetId, string>> = {
 export function getHyperliquidCoinForAsset(assetId: string): string | null {
   return HYPERLIQUID_ASSET_MAP[assetId as AssetId] ?? null;
 }
+
+/** The coin allowlist for real order submission (Phase 4) — derived from
+ * this same map rather than a second hardcoded list, so adding a third
+ * tradable asset later only ever means touching this one file. */
+export function isTradableHyperliquidCoin(coin: string): boolean {
+  return Object.values(HYPERLIQUID_ASSET_MAP).includes(coin);
+}

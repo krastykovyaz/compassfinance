@@ -10,6 +10,8 @@
 
 import { getOrFetch } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
+import { isTradableHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
+import { getHyperliquidUniverse } from "./markets";
 import {
   fetchMetaAndAssetCtxs,
   fetchCandleSnapshot,
@@ -17,6 +19,7 @@ import {
   fetchClearinghouseState,
   fetchOpenOrders,
   fetchUserFills,
+  postExchange,
   type HyperliquidRawPosition,
 } from "./client";
 import { isChartRange, mapRangeToHyperliquidParams, type ChartRange } from "./range-mapping";
@@ -31,6 +34,9 @@ import type {
   HyperliquidAccountResult,
   HyperliquidOpenOrdersResult,
   HyperliquidFillsResult,
+  HyperliquidExchangeActionType,
+  HyperliquidExchangeResult,
+  HyperliquidSignature,
 } from "./types";
 
 export type { ChartRange };
@@ -71,13 +77,18 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
       for (let i = 0; i < meta.universe.length; i++) {
         const coin = meta.universe[i].name;
         const maxLeverage = meta.universe[i].maxLeverage;
+        const szDecimals = meta.universe[i].szDecimals;
         const ctx = assetCtxs[i];
         const price = toNumber(ctx.markPx);
         const prevDayPx = toNumber(ctx.prevDayPx);
         const volume24h = toNumber(ctx.dayNtlVlm);
         const fundingRate = toNumber(ctx.funding);
 
-        if ([price, prevDayPx, volume24h, fundingRate].some(Number.isNaN) || !Number.isFinite(maxLeverage)) {
+        if (
+          [price, prevDayPx, volume24h, fundingRate].some(Number.isNaN) ||
+          !Number.isFinite(maxLeverage) ||
+          !Number.isFinite(szDecimals)
+        ) {
           console.error(`[hyperliquid-service] skipping ${coin}: non-numeric field in asset context`);
           continue;
         }
@@ -96,6 +107,8 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
           fundingRate,
           timestamp,
           maxLeverage,
+          assetIndex: i,
+          szDecimals,
         });
       }
       return result;
@@ -336,5 +349,187 @@ export async function getHyperliquidUserFills(address: string, limit = 20): Prom
   } catch (err) {
     const reason = err instanceof Error ? err.message : "Hyperliquid trade history unavailable";
     return { status: "unavailable", reason };
+  }
+}
+
+// --- Order execution (Phase 4) — the server never signs anything and
+// never sees a private key; every signature is produced client-side,
+// inside the user's own wallet, before submitHyperliquidExchangeAction()
+// is ever called. This is a thin validate-then-relay layer: reject before
+// ever contacting Hyperliquid when a check fails, otherwise forward the
+// caller's `action` object byte-identical (never reconstructed — the
+// signature's hash depends on the exact shape/key order that was signed)
+// and classify Hyperliquid's real response. Never wrapped in getOrFetch —
+// a write must never be cached or deduplicated. ---
+
+const EXCHANGE_ACTION_TYPES: HyperliquidExchangeActionType[] = ["updateLeverage", "order"];
+
+function isValidExchangeActionType(value: unknown): value is HyperliquidExchangeActionType {
+  return typeof value === "string" && (EXCHANGE_ACTION_TYPES as string[]).includes(value);
+}
+
+/** The asset index this action references, for either action type —
+ * reads/inspects the action, never reconstructs it. */
+function extractAssetIndex(action: Record<string, unknown>): number | null {
+  if (action.type === "updateLeverage") {
+    return typeof action.asset === "number" ? action.asset : null;
+  }
+  if (action.type === "order") {
+    const orders = action.orders;
+    // Phase 4 scope: exactly one order per action, no batch submissions.
+    if (!Array.isArray(orders) || orders.length !== 1) return null;
+    const a = (orders[0] as Record<string, unknown> | undefined)?.a;
+    return typeof a === "number" ? a : null;
+  }
+  return null;
+}
+
+function extractLeverage(action: Record<string, unknown>): number | null {
+  return action.type === "updateLeverage" && typeof action.leverage === "number" ? action.leverage : null;
+}
+
+/** Notional value (price × size) of a single-order "order" action — the
+ * conservative (larger) bound used in place of true margin, since the
+ * leverage actually in effect at execution time depends on a prior
+ * updateLeverage action this function doesn't re-read from Hyperliquid. */
+function extractOrderNotional(action: Record<string, unknown>): number | null {
+  if (action.type !== "order") return null;
+  const orders = action.orders;
+  if (!Array.isArray(orders) || orders.length !== 1) return null;
+  const order = orders[0] as Record<string, unknown>;
+  const price = Number(order.p);
+  const size = Number(order.s);
+  return Number.isFinite(price) && Number.isFinite(size) ? price * size : null;
+}
+
+type RawOrderStatus =
+  | { resting: { oid: number } }
+  | { filled: { totalSz: string; avgPx: string; oid: number } }
+  | { error: string }
+  | "waitingForFill"
+  | "waitingForTrigger";
+
+type RawExchangeResponse = {
+  status: "ok" | "err";
+  response?: { type: string; data?: { statuses?: RawOrderStatus[] } } | string;
+};
+
+/** Classifies Hyperliquid's real /exchange response — never optimistic,
+ * never fabricates a fill. `pending` covers updateLeverage's plain "ok"
+ * (no per-item statuses) and an order's rare "waitingForFill"/
+ * "waitingForTrigger" (Phase 4 only places market orders, so a trigger
+ * order should never actually produce that second one in practice). */
+function classifyExchangeResponse(raw: unknown): HyperliquidExchangeResult {
+  if (!raw || typeof raw !== "object") {
+    return { status: "hyperliquid-rejected", message: "Unrecognized response from Hyperliquid" };
+  }
+  const data = raw as RawExchangeResponse;
+  if (data.status !== "ok") {
+    const message = typeof data.response === "string" ? data.response : "Hyperliquid rejected the action";
+    return { status: "hyperliquid-rejected", message };
+  }
+
+  const statuses = typeof data.response === "object" ? data.response?.data?.statuses : undefined;
+  if (!statuses || statuses.length === 0) {
+    return { status: "pending" };
+  }
+
+  const first = statuses[0];
+  if (first === "waitingForFill" || first === "waitingForTrigger") {
+    return { status: "pending" };
+  }
+  if ("error" in first) {
+    return { status: "hyperliquid-rejected", message: first.error };
+  }
+  if ("filled" in first) {
+    return {
+      status: "filled",
+      orderId: first.filled.oid,
+      totalSize: Number(first.filled.totalSz),
+      avgPrice: Number(first.filled.avgPx),
+    };
+  }
+  if ("resting" in first) {
+    return { status: "resting", orderId: first.resting.oid };
+  }
+  return { status: "hyperliquid-rejected", message: "Unrecognized order status from Hyperliquid" };
+}
+
+export async function submitHyperliquidExchangeAction(
+  address: string,
+  action: Record<string, unknown>,
+  nonce: number,
+  signature: HyperliquidSignature
+): Promise<HyperliquidExchangeResult> {
+  if (!isHyperliquidEnabled()) {
+    return { status: "rejected", reason: "disabled", message: "Hyperliquid trading is disabled" };
+  }
+  if (!isValidExchangeActionType(action.type)) {
+    return { status: "rejected", reason: "unknown-action-type", message: "Unsupported action type" };
+  }
+
+  const assetIndex = extractAssetIndex(action);
+  if (assetIndex === null) {
+    return { status: "rejected", reason: "invalid-request", message: "Missing or invalid asset reference" };
+  }
+
+  const universeResult = await getHyperliquidUniverse();
+  if (universeResult.status !== "ok") {
+    return { status: "rejected", reason: "invalid-request", message: "Hyperliquid market list unavailable" };
+  }
+  const asset = universeResult.universe.find((u) => u.index === assetIndex);
+  if (!asset || !isTradableHyperliquidCoin(asset.coin)) {
+    return { status: "rejected", reason: "unknown-coin", message: "This asset isn't available for trading" };
+  }
+
+  if (action.type === "updateLeverage") {
+    const leverage = extractLeverage(action);
+    if (leverage === null || leverage < 1) {
+      return { status: "rejected", reason: "invalid-request", message: "Invalid leverage" };
+    }
+    if (leverage > asset.maxLeverage) {
+      return {
+        status: "rejected",
+        reason: "leverage-exceeds-max",
+        message: `Leverage exceeds ${asset.coin}'s maximum of ${asset.maxLeverage}x`,
+      };
+    }
+  }
+
+  if (action.type === "order") {
+    const notional = extractOrderNotional(action);
+    if (notional === null) {
+      return { status: "rejected", reason: "invalid-request", message: "Invalid order parameters" };
+    }
+    // Fresh, uncached balance check — a write path deserves a tighter
+    // staleness bound than getHyperliquidAccount's 10s getOrFetch cache.
+    // This is a UX courtesy, not the real security boundary: Hyperliquid's
+    // own margin engine is authoritative and will reject an actually-
+    // undermargined order regardless of what this check concludes.
+    const fresh = await fetchClearinghouseState(address);
+    if (!fresh.ok) {
+      return { status: "rejected", reason: "invalid-request", message: "Couldn't verify account balance" };
+    }
+    const withdrawable = toNumber(fresh.data.withdrawable);
+    if (!Number.isNaN(withdrawable) && notional > withdrawable * asset.maxLeverage) {
+      return {
+        status: "rejected",
+        reason: "insufficient-balance",
+        message: "Order size exceeds what your balance can support",
+      };
+    }
+  }
+
+  try {
+    const result = await postExchange<unknown>({ action, nonce, signature });
+    if (!result.ok) {
+      // Could not confirm Hyperliquid ever received/processed this —
+      // never reported as a hard failure, since it may have gone through.
+      return { status: "network-failure", message: result.message };
+    }
+    return classifyExchangeResponse(result.data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
+    return { status: "network-failure", message };
   }
 }

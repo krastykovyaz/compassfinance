@@ -8,6 +8,7 @@ import {
   isUserRejectedError,
   isWalletAvailable,
   requestAccounts,
+  signTypedData,
   subscribeAccountsChanged,
   subscribeChainChanged,
   subscribeDisconnect,
@@ -241,5 +242,73 @@ describe("subscribeAccountsChanged / subscribeChainChanged / subscribeDisconnect
     subscribeAccountsChanged(cb, null);
     provider._emit("accountsChanged", ["0xnew"]);
     expect(cb).toHaveBeenCalledWith(["0xnew"]);
+  });
+});
+
+describe("signTypedData — the one signing method (Phase 4 real order execution)", () => {
+  const DOMAIN = { name: "Exchange", version: "1", chainId: 1337, verifyingContract: "0x0000000000000000000000000000000000000000" };
+  const TYPES = { Agent: [{ name: "source", type: "string" }, { name: "connectionId", type: "bytes32" }] };
+  const MESSAGE = { source: "a", connectionId: "0xdeadbeef" };
+
+  it("calls eth_signTypedData_v4 with the address and a JSON-encoded typed-data payload, returning the wallet's signature", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "0xsignature") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    const sig = await signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE);
+
+    expect(sig).toBe("0xsignature");
+    expect(provider.request).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(provider.request).mock.calls[0][0] as { method: string; params: [string, string] };
+    expect(call.method).toBe("eth_signTypedData_v4");
+    expect(call.params[0]).toBe("0xabc");
+    const payload = JSON.parse(call.params[1]);
+    expect(payload.domain).toEqual(DOMAIN);
+    expect(payload.primaryType).toBe("Agent");
+    expect(payload.message).toEqual(MESSAGE);
+    expect(payload.types.Agent).toEqual(TYPES.Agent);
+  });
+
+  it("declares the EIP712Domain type fields matching whichever domain fields are actually present", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "0xsignature") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    await signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE);
+
+    const call = vi.mocked(provider.request).mock.calls[0][0] as unknown as { params: [string, string] };
+    const payload = JSON.parse(call.params[1]);
+    const domainFieldNames = payload.types.EIP712Domain.map((f: { name: string }) => f.name);
+    expect(domainFieldNames.sort()).toEqual(["chainId", "name", "verifyingContract", "version"]);
+  });
+
+  it("omits an EIP712Domain field the domain object doesn't actually have (e.g. no salt)", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "0xsignature") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    await signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE);
+
+    const call = vi.mocked(provider.request).mock.calls[0][0] as unknown as { params: [string, string] };
+    const payload = JSON.parse(call.params[1]);
+    const domainFieldNames = payload.types.EIP712Domain.map((f: { name: string }) => f.name);
+    expect(domainFieldNames).not.toContain("salt");
+  });
+
+  it("throws when no wallet is available", async () => {
+    await expect(signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE)).rejects.toThrow(/No injected wallet/);
+  });
+
+  it("propagates a user-rejection error, classified correctly by isUserRejectedError — signing must never crash on a normal decline", async () => {
+    const rejection = { code: 4001, message: "User rejected the request." };
+    const provider = mockProvider({ request: vi.fn().mockRejectedValue(rejection) });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    await expect(signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE)).rejects.toEqual(rejection);
+    expect(isUserRejectedError(rejection)).toBe(true);
+  });
+
+  it("falls back to the injected provider when explicitly passed null (not just when omitted)", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "0xsignature") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    await expect(signTypedData("0xabc", DOMAIN, TYPES, "Agent", MESSAGE, null)).resolves.toBe("0xsignature");
   });
 });

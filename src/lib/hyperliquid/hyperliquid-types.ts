@@ -17,6 +17,13 @@ export type HyperliquidMarketSnapshot = {
   /** From Hyperliquid's meta.universe — the maximum leverage this market
    * permits. Used by the Phase 3 order-preview calculator. */
   maxLeverage: number;
+  /** Hyperliquid's own numeric asset index — order/leverage actions
+   * reference assets by this index, never by symbol. */
+  assetIndex: number;
+  /** Decimal places Hyperliquid allows for this asset's order size (also
+   * bounds price precision). Used by the Phase 4 order signer to format a
+   * valid price/size before signing. */
+  szDecimals: number;
 };
 
 /** From /api/hyperliquid/markets — never fabricated data. */
@@ -112,3 +119,37 @@ export type HyperliquidOpenOrdersFetchResult =
 export type HyperliquidFillsFetchResult =
   | { status: "ok"; fills: HyperliquidFill[] }
   | { status: "unavailable"; reason: string };
+
+// ---------------------------------------------------------------------------
+// Phase 4 — real order execution. Signing happens entirely client-side,
+// inside the user's own wallet, before any of this is sent anywhere —
+// these types describe an ALREADY-SIGNED submission and the real result
+// /api/hyperliquid/order returns, never a private key or signing material.
+// ---------------------------------------------------------------------------
+
+export type HyperliquidSignature = { r: string; s: string; v: number };
+
+/** Body POSTed to /api/hyperliquid/order — `action`/`nonce`/`signature`
+ * are exactly what the wallet signed, forwarded as-is. */
+export type HyperliquidExchangeSubmission = {
+  address: string;
+  action: Record<string, unknown>;
+  nonce: number;
+  signature: HyperliquidSignature;
+};
+
+export type HyperliquidExchangeRejectionReason =
+  | "disabled"
+  | "unknown-action-type"
+  | "unknown-coin"
+  | "leverage-exceeds-max"
+  | "insufficient-balance"
+  | "invalid-request";
+
+export type HyperliquidExchangeResult =
+  | { status: "resting"; orderId: number }
+  | { status: "filled"; orderId: number; totalSize: number; avgPrice: number }
+  | { status: "pending" }
+  | { status: "rejected"; reason: HyperliquidExchangeRejectionReason; message: string }
+  | { status: "hyperliquid-rejected"; message: string }
+  | { status: "network-failure"; message: string };

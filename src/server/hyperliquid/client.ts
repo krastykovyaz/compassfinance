@@ -8,7 +8,7 @@
 // Single endpoint, POST, body varies by "type" — see
 // https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint
 
-import { getHyperliquidBaseUrl, getHyperliquidTimeoutMs } from "./config";
+import { getHyperliquidBaseUrl, getHyperliquidExchangeUrl, getHyperliquidTimeoutMs } from "./config";
 
 export type HyperliquidFailureReason =
   | "network_error"
@@ -20,10 +20,18 @@ export type HyperliquidFetchResult<T> =
   | { ok: true; data: T }
   | { ok: false; reason: HyperliquidFailureReason; message: string };
 
-async function postInfo<T>(body: Record<string, unknown>): Promise<HyperliquidFetchResult<T>> {
+// Shared POST + classify logic for both the read-only /info endpoint and
+// the signed-write /exchange endpoint — same failure modes, same honest
+// "never invent a substitute value" stance either way. `logLabel` is just
+// what appears in the server log line, never sent upstream.
+async function postJson<T>(
+  url: string,
+  body: Record<string, unknown>,
+  logLabel: string
+): Promise<HyperliquidFetchResult<T>> {
   let res: Response;
   try {
-    res = await fetch(getHyperliquidBaseUrl(), {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -32,17 +40,17 @@ async function postInfo<T>(body: Record<string, unknown>): Promise<HyperliquidFe
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[hyperliquid-client] network error for ${body.type}: ${reason}`);
+    console.error(`[hyperliquid-client] network error for ${logLabel}: ${reason}`);
     return { ok: false, reason: "network_error", message: "Network error reaching Hyperliquid" };
   }
 
   if (res.status === 429) {
-    console.error(`[hyperliquid-client] rate limited for ${body.type}`);
+    console.error(`[hyperliquid-client] rate limited for ${logLabel}`);
     return { ok: false, reason: "rate_limited", message: "Hyperliquid rate limit exceeded" };
   }
 
   if (!res.ok) {
-    console.error(`[hyperliquid-client] HTTP ${res.status} for ${body.type}`);
+    console.error(`[hyperliquid-client] HTTP ${res.status} for ${logLabel}`);
     return { ok: false, reason: "http_error", message: `Hyperliquid request failed (${res.status})` };
   }
 
@@ -51,11 +59,31 @@ async function postInfo<T>(body: Record<string, unknown>): Promise<HyperliquidFe
     json = await res.json();
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[hyperliquid-client] non-JSON response for ${body.type}: ${reason}`);
+    console.error(`[hyperliquid-client] non-JSON response for ${logLabel}: ${reason}`);
     return { ok: false, reason: "malformed_response", message: "Hyperliquid returned an unreadable response" };
   }
 
   return { ok: true, data: json as T };
+}
+
+async function postInfo<T>(body: Record<string, unknown>): Promise<HyperliquidFetchResult<T>> {
+  return postJson<T>(getHyperliquidBaseUrl(), body, String(body.type));
+}
+
+// Relays an ALREADY-SIGNED action to Hyperliquid's write endpoint. This
+// function never signs anything and never sees a private key — `body` is
+// exactly `{action, nonce, signature}` produced client-side, inside the
+// user's own wallet, before this is ever called. Exported (unlike
+// postInfo) because service.ts's submitHyperliquidExchangeAction() must
+// forward the caller's `action` object byte-identical, never reconstructed
+// — the signature's hash depends on the exact shape/key-order that was
+// signed, so this stays a thin pass-through with no shape transformation.
+export async function postExchange<T>(body: {
+  action: Record<string, unknown>;
+  nonce: number;
+  signature: { r: string; s: string; v: number };
+}): Promise<HyperliquidFetchResult<T>> {
+  return postJson<T>(getHyperliquidExchangeUrl(), body, String(body.action.type));
 }
 
 // --- Raw response shapes (only the fields this integration reads) ---

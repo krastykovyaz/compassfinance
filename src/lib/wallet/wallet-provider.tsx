@@ -11,8 +11,10 @@
 //
 // Two transports feed this ONE state machine — there is no second wallet
 // state. `wcProvider` below is internal bookkeeping (which transport, if
-// any, is currently WalletConnect) — it is never exposed on
-// WalletContextValue.
+// any, is currently WalletConnect) — the raw state is never exposed on
+// WalletContextValue; only a derived read accessor (getSigningProvider,
+// added for Phase 4) that resolves the same wcProvider ?? getInjectedProvider()
+// fallback already used internally by applyConnection/loadBalance.
 
 import {
   createContext,
@@ -27,6 +29,7 @@ import {
 import {
   getApprovedAccounts,
   getChainId,
+  getInjectedProvider,
   getUsdcBalance,
   isSupportedChain,
   isUserRejectedError,
@@ -353,6 +356,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [state.address, state.chainId, wcProvider, loadBalance]);
 
+  const getSigningProvider = useCallback(() => wcProvider ?? getInjectedProvider(), [wcProvider]);
+
   const value = useMemo<WalletContextValue>(
     () => ({
       ...state,
@@ -362,8 +367,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       connectWalletConnect,
       walletConnectUri,
       isWalletConnectAvailable: isWalletConnectConfigured(),
+      getSigningProvider,
     }),
-    [state, connect, disconnect, refreshBalance, connectWalletConnect, walletConnectUri]
+    [state, connect, disconnect, refreshBalance, connectWalletConnect, walletConnectUri, getSigningProvider]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

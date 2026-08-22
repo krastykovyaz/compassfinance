@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getInvestmentAccess } from "@/lib/learning/unlocks";
 import type { LearningProgress } from "@/lib/learning/types";
@@ -50,14 +50,25 @@ describe("The wallet layer never touches Paper Trading or the learning/unlock sy
   });
 });
 
-// Phase 3 (order preview) guardrail: stays isolated from Paper
-// Trading/unlock like every prior phase, AND never references anything
-// that would submit a real order — no signing, no Hyperliquid "exchange"
-// (write) endpoint, no order-writing action name.
-describe("Hyperliquid Trading Phase 3 (order preview) stays isolated and never submits a real order", () => {
+// Hyperliquid Trading — order preview (Phase 3) and real order execution
+// (Phase 4) stay isolated from Paper Trading/unlock like every prior
+// phase. Phase 3's original second test here ("never references a
+// Hyperliquid order-writing action or endpoint") is DELIBERATELY RETIRED
+// as of Phase 4 — real order execution is the literal point of this
+// phase, so that assertion is no longer valid and would fail on purpose.
+// In its place: real order submission is centralized to exactly one
+// write function (postExchange, defined in client.ts and called only
+// from service.ts's submitHyperliquidExchangeAction — the client-side
+// signer/route never call it directly, they POST to our own API route
+// instead) — this test proves that centralization holds structurally, so
+// "who can submit a real order" stays answerable by reading one small
+// file list rather than the whole codebase.
+describe("Hyperliquid Trading (preview + real execution) stays isolated and centralized", () => {
   const files = [
     "src/lib/hyperliquid/perp-order-calculator.ts",
+    "src/lib/hyperliquid/hyperliquid-order-signer.ts",
     "src/app/hyperliquid/[coin]/page.tsx",
+    "src/app/api/hyperliquid/order/route.ts",
     "src/components/hyperliquid/perp-order-preview-sheet.tsx",
   ];
 
@@ -69,14 +80,42 @@ describe("Hyperliquid Trading Phase 3 (order preview) stays isolated and never s
     }
   });
 
-  it("never references a Hyperliquid order-writing action or endpoint", () => {
-    const DANGEROUS = [/\/exchange\b/i, /"order"/i, /updateLeverage/i, /cancelOrder/i, /placeOrder/i, /submitOrder/i];
-    for (const f of files) {
-      const src = readFileSync(f, "utf8");
-      for (const pattern of DANGEROUS) {
-        expect(src).not.toMatch(pattern);
+  it("only client.ts (defines it) and service.ts (calls it) ever reference postExchange — the real Hyperliquid write path is centralized to these two files", () => {
+    // Matches both a direct call (postExchange(...)) and a generic call
+    // (postExchange<T>(...)) — service.ts's real call site is the latter.
+    const POST_EXCHANGE_REFERENCE = /postExchange[<(]/;
+    const ALLOWED = new Set(["src/server/hyperliquid/client.ts", "src/server/hyperliquid/service.ts"]);
+
+    function allSourceFiles(dir: string): string[] {
+      const out: string[] = [];
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) out.push(...allSourceFiles(path));
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(path);
+      }
+      return out;
+    }
+
+    const scanned = [
+      ...allSourceFiles("src/server/hyperliquid"),
+      ...allSourceFiles("src/lib/hyperliquid"),
+      ...allSourceFiles("src/app/api/hyperliquid"),
+    ];
+    let sawAtLeastOneReference = false;
+    for (const file of scanned) {
+      const src = readFileSync(file, "utf8");
+      if (POST_EXCHANGE_REFERENCE.test(src)) {
+        sawAtLeastOneReference = true;
+        expect(ALLOWED.has(file)).toBe(true);
       }
     }
+    expect(sawAtLeastOneReference).toBe(true); // sanity: the test actually found the real call site
+  });
+
+  it("the real allowlist of submittable action types (updateLeverage, order) is present in service.ts — nothing else is ever forwarded to Hyperliquid", () => {
+    const src = readFileSync("src/server/hyperliquid/service.ts", "utf8");
+    expect(src).toMatch(/"updateLeverage"/);
+    expect(src).toMatch(/"order"/);
   });
 });
 

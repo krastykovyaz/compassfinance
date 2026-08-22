@@ -1,12 +1,13 @@
 "use client";
 
-// Hyperliquid Trading Phase 3 — order PREVIEW only. Reuses the existing
-// wallet (useWallet) and Hyperliquid account (useHyperliquidAccount) state
+// Hyperliquid Trading — Phase 3 built the order PREVIEW; Phase 4 added
+// real signed order execution on top of it. Reuses the existing wallet
+// (useWallet) and Hyperliquid account (useHyperliquidAccount) state
 // exactly as Phase 2 built them — no new wallet/account state anywhere in
-// this file. There is no order-submission call anywhere on this page: the
-// "Preview Order" button only opens a read-only summary
-// (PerpOrderPreviewSheet); nothing here ever POSTs to Hyperliquid or
-// requests a wallet signature. The simulated/practice investing system
+// this file. Signing happens entirely inside the connected wallet
+// (hyperliquid-order-signer.ts); this page never touches a private key,
+// it only calls getSigningProvider() (already exposed on useWallet()) and
+// hands it to the signer. The simulated/practice investing system
 // (src/lib/trading/) is never imported here — this trades against the
 // real, connected Hyperliquid account, a completely separate system by
 // design (see the Hyperliquid-integration isolation tests).
@@ -19,7 +20,7 @@ import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { PriceChart } from "@/components/asset/price-chart";
 import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
-import { PerpOrderPreviewSheet } from "@/components/hyperliquid/perp-order-preview-sheet";
+import { PerpOrderPreviewSheet, type PerpOrderExecutionUiState } from "@/components/hyperliquid/perp-order-preview-sheet";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
@@ -30,6 +31,8 @@ import {
   type PerpOrderValidationError,
   type PerpSide,
 } from "@/lib/hyperliquid/perp-order-calculator";
+import { signAndSubmitPerpOrder } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -58,8 +61,8 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { t } = useTranslation();
 
   const { status: sessionStatus } = useSession();
-  const { status: walletStatus, address, isConnecting } = useWallet();
-  const { snapshot, status: accountStatus, errorMessage } = useHyperliquidAccount();
+  const { status: walletStatus, address, isConnecting, getSigningProvider } = useWallet();
+  const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
   const { markets } = useHyperliquidMarkets();
 
   const [side, setSide] = useState<PerpSide>("long");
@@ -67,6 +70,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const [leverage, setLeverage] = useState(2);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [executionState, setExecutionState] = useState<PerpOrderExecutionUiState>({ stage: "idle" });
 
   const coin = getHyperliquidCoinForAsset(slug);
   const market = coin ? (markets.find((m) => m.assetId === coin) ?? null) : null;
@@ -96,6 +100,68 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       }),
     [side, marginUsdc, leverage, market?.price, maxLeverage, availableBalance]
   );
+
+  // Real order execution (Phase 4). Fetches a FRESH price/network snapshot
+  // right before signing — never trusts whatever the 30s-polled
+  // useHyperliquidMarkets() state happens to hold at the moment the button
+  // is tapped, since that's what the slippage-bounded order price and the
+  // mainnet/testnet signing mode are derived from.
+  async function handleConfirmAndSign() {
+    const provider = getSigningProvider();
+    if (!provider || !address || previewResult.status !== "ok") return;
+
+    setExecutionState({ stage: "signing-leverage" });
+
+    let freshMarket: { price: number; assetIndex: number; szDecimals: number } | null = null;
+    let isTestnet = false;
+    try {
+      const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
+      const json = (await res.json()) as { isTestnet?: boolean; result: HyperliquidMarketsFetchResult };
+      isTestnet = Boolean(json.isTestnet);
+      if (json.result.status === "ok") {
+        const fresh = json.result.markets.find((m) => m.assetId === coin);
+        if (fresh) freshMarket = { price: fresh.price, assetIndex: fresh.assetIndex, szDecimals: fresh.szDecimals };
+      }
+    } catch {
+      // fall through — freshMarket stays null, handled below
+    }
+
+    if (!freshMarket) {
+      setExecutionState({
+        stage: "done",
+        result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
+      });
+      return;
+    }
+
+    const result = await signAndSubmitPerpOrder({
+      provider,
+      address,
+      assetIndex: freshMarket.assetIndex,
+      szDecimals: freshMarket.szDecimals,
+      side,
+      marginUsdc,
+      leverage,
+      markPrice: freshMarket.price,
+      isTestnet,
+      onStageChange: (stage) => setExecutionState({ stage }),
+    });
+
+    setExecutionState({ stage: "done", result });
+
+    // Real Hyperliquid-side outcomes (or an ambiguous network-failure that
+    // might have gone through) all warrant refreshing the real account —
+    // a pure wallet-rejection or our own pre-flight rejection never
+    // reached Hyperliquid, so there's nothing new to reconcile.
+    if (result.status !== "wallet-rejected" && result.status !== "rejected") {
+      refreshAccount();
+    }
+  }
+
+  function handleClosePreview() {
+    setPreviewOpen(false);
+    setExecutionState({ stage: "idle" });
+  }
 
   if (!(SUPPORTED_SLUGS as readonly string[]).includes(slug) || !coin) {
     return (
@@ -291,7 +357,10 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
             ) : null}
 
             <button
-              onClick={() => setPreviewOpen(true)}
+              onClick={() => {
+                setExecutionState({ stage: "idle" });
+                setPreviewOpen(true);
+              }}
               disabled={previewResult.status !== "ok"}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-50"
             >
@@ -303,7 +372,13 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       </div>
 
       {previewOpen && previewResult.status === "ok" ? (
-        <PerpOrderPreviewSheet coin={coin} preview={previewResult.preview} onClose={() => setPreviewOpen(false)} />
+        <PerpOrderPreviewSheet
+          coin={coin}
+          preview={previewResult.preview}
+          executionState={executionState}
+          onConfirmAndSign={handleConfirmAndSign}
+          onClose={handleClosePreview}
+        />
       ) : null}
     </AppShell>
   );

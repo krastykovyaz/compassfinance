@@ -18,6 +18,14 @@ export type HyperliquidMarketSnapshot = {
    * permits. Used by the Phase 3 order-preview calculator; never used to
    * gate anything about the market snapshot itself. */
   maxLeverage: number;
+  /** Hyperliquid's own numeric asset index (its universe array position) —
+   * order/leverage actions reference assets by this index, never by
+   * symbol. From the same meta.universe entry as maxLeverage. */
+  assetIndex: number;
+  /** Decimal places Hyperliquid allows for this asset's order size — also
+   * bounds price precision (price allows at most 6 - szDecimals decimal
+   * places for perps). From the same meta.universe entry. */
+  szDecimals: number;
 };
 
 /** Deliberately identical shape to src/server/market/service.ts's CandlePoint
@@ -115,3 +123,55 @@ export type HyperliquidOpenOrdersResult =
 export type HyperliquidFillsResult =
   | { status: "ok"; fills: HyperliquidFill[] }
   | { status: "unavailable"; reason: string };
+
+// ---------------------------------------------------------------------------
+// Phase 4 — real order execution. The server never signs anything; every
+// signature is produced client-side, inside the user's own wallet, before
+// submitHyperliquidExchangeAction() is ever called. This layer only
+// validates and relays an already-signed action, then classifies the real
+// response Hyperliquid sends back — it never fabricates a fill or a
+// balance, and never optimistically reports success before Hyperliquid
+// itself has answered.
+// ---------------------------------------------------------------------------
+
+/** The only two action types this relay will ever forward — anything else
+ * is rejected before Hyperliquid is ever contacted. Deliberately NOT a
+ * generic signed-action proxy. */
+export type HyperliquidExchangeActionType = "updateLeverage" | "order";
+
+export type HyperliquidSignature = { r: string; s: string; v: number };
+
+/** What the client sends after signing — the action object must be
+ * forwarded byte-identical to what was actually signed, never
+ * reconstructed (the signature's hash depends on exact key order). */
+export type HyperliquidExchangeSubmission = {
+  action: Record<string, unknown>;
+  nonce: number;
+  signature: HyperliquidSignature;
+};
+
+/** Why this server's OWN pre-flight check refused to even contact
+ * Hyperliquid — distinct from a rejection Hyperliquid itself returns. */
+export type HyperliquidExchangeRejectionReason =
+  | "disabled"
+  | "unknown-action-type"
+  | "unknown-coin"
+  | "leverage-exceeds-max"
+  | "insufficient-balance"
+  | "invalid-request";
+
+export type HyperliquidExchangeResult =
+  | { status: "resting"; orderId: number }
+  | { status: "filled"; orderId: number; totalSize: number; avgPrice: number }
+  /** updateLeverage's plain ok response, or an order's rare
+   * "waitingForFill"/"waitingForTrigger" status — Phase 4 places market
+   * orders only, so a trigger order should never actually occur here. */
+  | { status: "pending" }
+  /** Rejected by OUR OWN pre-flight validation — never reached Hyperliquid. */
+  | { status: "rejected"; reason: HyperliquidExchangeRejectionReason; message: string }
+  /** Hyperliquid itself returned an error status for this action. */
+  | { status: "hyperliquid-rejected"; message: string }
+  /** Could not even determine whether Hyperliquid received the action
+   * (timeout/network failure after — or possibly during — submission).
+   * The caller must never treat this as "failed": it may have filled. */
+  | { status: "network-failure"; message: string };

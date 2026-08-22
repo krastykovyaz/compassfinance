@@ -6,6 +6,8 @@ const fetchL2Book = vi.fn();
 const fetchClearinghouseState = vi.fn();
 const fetchOpenOrders = vi.fn();
 const fetchUserFills = vi.fn();
+const fetchMeta = vi.fn();
+const postExchange = vi.fn();
 
 vi.mock("./client", () => ({
   fetchMetaAndAssetCtxs: (...args: unknown[]) => fetchMetaAndAssetCtxs(...args),
@@ -14,6 +16,8 @@ vi.mock("./client", () => ({
   fetchClearinghouseState: (...args: unknown[]) => fetchClearinghouseState(...args),
   fetchOpenOrders: (...args: unknown[]) => fetchOpenOrders(...args),
   fetchUserFills: (...args: unknown[]) => fetchUserFills(...args),
+  fetchMeta: (...args: unknown[]) => fetchMeta(...args),
+  postExchange: (...args: unknown[]) => postExchange(...args),
 }));
 
 import { clearMarketCache } from "@/server/market/cache";
@@ -24,6 +28,7 @@ import {
   getHyperliquidAccount,
   getHyperliquidOpenOrders,
   getHyperliquidUserFills,
+  submitHyperliquidExchangeAction,
 } from "./service";
 
 const RAW_META = {
@@ -474,5 +479,181 @@ describe("getHyperliquidUserFills", () => {
     const result = await getHyperliquidUserFills("0xabc");
 
     expect(result.status).toBe("unavailable");
+  });
+});
+
+describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", () => {
+  const UPDATE_LEVERAGE_ACTION = { type: "updateLeverage", asset: 0, isCross: true, leverage: 5 };
+  const ORDER_ACTION = {
+    type: "order",
+    orders: [{ a: 0, b: true, p: "60000", s: "0.01", r: false, t: { limit: { tif: "FrontendMarket" } } }],
+    grouping: "na",
+  };
+  const SIGNATURE = { r: "0xaaa", s: "0xbbb", v: 27 as const };
+  const NONCE = 1_700_000_000_000;
+
+  function mockAccountBalance(withdrawable: string) {
+    fetchClearinghouseState.mockResolvedValue({
+      ok: true,
+      data: {
+        assetPositions: [],
+        marginSummary: { accountValue: withdrawable, totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+        withdrawable,
+        time: Date.now(),
+      },
+    });
+  }
+
+  beforeEach(() => {
+    fetchMeta.mockResolvedValue({ ok: true, data: RAW_META }); // BTC index 0, ETH index 1
+  });
+
+  it("returns rejected/disabled and never calls the client when the flag is off", async () => {
+    process.env.HYPERLIQUID_ENABLED = "false";
+
+    const result = await submitHyperliquidExchangeAction("0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "rejected", reason: "disabled", message: expect.any(String) });
+    expect(fetchMeta).not.toHaveBeenCalled();
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects an action type outside the exact allowlist, never contacting Hyperliquid", async () => {
+    const result = await submitHyperliquidExchangeAction(
+      "0xabc",
+      { type: "withdraw3", destination: "0xattacker", amount: "1000" },
+      NONCE,
+      SIGNATURE
+    );
+
+    expect(result).toEqual({ status: "rejected", reason: "unknown-action-type", message: expect.any(String) });
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a coin that isn't in the BTC/ETH allowlist, even if it's a real Hyperliquid market", async () => {
+    fetchMeta.mockResolvedValue({
+      ok: true,
+      data: { universe: [{ name: "SOL", szDecimals: 2, maxLeverage: 20 }] },
+    });
+
+    const result = await submitHyperliquidExchangeAction(
+      "0xabc",
+      { type: "updateLeverage", asset: 0, isCross: true, leverage: 5 },
+      NONCE,
+      SIGNATURE
+    );
+
+    expect(result).toEqual({ status: "rejected", reason: "unknown-coin", message: expect.any(String) });
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects leverage above the coin's real max leverage", async () => {
+    const result = await submitHyperliquidExchangeAction(
+      "0xabc",
+      { type: "updateLeverage", asset: 0, isCross: true, leverage: 999 }, // BTC max is 50 in RAW_META
+      NONCE,
+      SIGNATURE
+    );
+
+    expect(result).toEqual({ status: "rejected", reason: "leverage-exceeds-max", message: expect.any(String) });
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  it("rejects an order whose notional exceeds what the account's balance could support even at max leverage", async () => {
+    mockAccountBalance("1"); // $1 available, max leverage 50x -> max notional $50; order here is 0.01 * 60000 = $600
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  it("uses a FRESH balance check on every call, never a cached one — two calls hit fetchClearinghouseState twice", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE + 1, SIGNATURE);
+
+    expect(fetchClearinghouseState).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards the action object byte-identical to postExchange — never reconstructed", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(postExchange).toHaveBeenCalledWith({ action: ORDER_ACTION, nonce: NONCE, signature: SIGNATURE });
+    // Same object reference, not a rebuilt copy.
+    expect(postExchange.mock.calls[0][0].action).toBe(ORDER_ACTION);
+  });
+
+  it("classifies a plain ok response (updateLeverage) as pending", async () => {
+    postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "pending" });
+  });
+
+  it("classifies a resting order status", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({
+      ok: true,
+      data: { status: "ok", response: { type: "order", data: { statuses: [{ resting: { oid: 77738308 } }] } } },
+    });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "resting", orderId: 77738308 });
+  });
+
+  it("classifies a filled order status", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ filled: { totalSz: "0.01", avgPx: "60123.4", oid: 1 } }] } },
+      },
+    });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "filled", orderId: 1, totalSize: 0.01, avgPrice: 60123.4 });
+  });
+
+  it("classifies a Hyperliquid-side per-order rejection (e.g. minimum order value)", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ error: "Order must have minimum value of $10." }] } },
+      },
+    });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "hyperliquid-rejected", message: "Order must have minimum value of $10." });
+  });
+
+  it("classifies a top-level Hyperliquid rejection (e.g. bad signature)", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({ ok: true, data: { status: "err", response: "Invalid signature" } });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "hyperliquid-rejected", message: "Invalid signature" });
+  });
+
+  it("classifies a transport/network failure as network-failure — never a hard 'rejected'", async () => {
+    mockAccountBalance("100000");
+    postExchange.mockResolvedValue({ ok: false, reason: "network_error", message: "timed out" });
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "network-failure", message: "timed out" });
   });
 });

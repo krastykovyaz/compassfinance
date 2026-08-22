@@ -7,10 +7,14 @@
 // data, not user-specific (same stance as /api/market/quote).
 
 import { NextResponse } from "next/server";
-import { isHyperliquidEnabled } from "@/server/hyperliquid/config";
+import { isHyperliquidEnabled, isHyperliquidTestnet } from "@/server/hyperliquid/config";
 import { getHyperliquidMarkets } from "@/server/hyperliquid/service";
 
 export async function GET() {
   const result = await getHyperliquidMarkets();
-  return NextResponse.json({ enabled: isHyperliquidEnabled(), result });
+  // isTestnet lets the client (Phase 4's order signer) know which network
+  // it's about to sign for, without needing its own NEXT_PUBLIC_ env var —
+  // this is the same request the trading page already makes for a fresh
+  // price right before signing, so it's not an extra round trip.
+  return NextResponse.json({ enabled: isHyperliquidEnabled(), isTestnet: isHyperliquidTestnet(), result });
 }
