@@ -14,6 +14,9 @@ export type HyperliquidMarketSnapshot = {
   volume24h: number;
   fundingRate: number;
   timestamp: number;
+  /** From Hyperliquid's meta.universe — the maximum leverage this market
+   * permits. Used by the Phase 3 order-preview calculator. */
+  maxLeverage: number;
 };
 
 /** From /api/hyperliquid/markets — never fabricated data. */

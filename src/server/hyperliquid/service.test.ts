@@ -74,6 +74,7 @@ describe("getHyperliquidMarkets", () => {
       expect(btc.changePercent24h).toBeCloseTo((1000 / 59000) * 100, 5);
       expect(btc.volume24h).toBe(1_000_000);
       expect(btc.fundingRate).toBe(0.0001);
+      expect(btc.maxLeverage).toBe(50);
     }
   });
 

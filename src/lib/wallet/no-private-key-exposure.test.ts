@@ -25,6 +25,9 @@ describe("No private key, seed phrase, or signing capability anywhere in the wal
   const files = [
     ...allTsFilesIn(WALLET_DIR),
     "src/lib/hyperliquid/hyperliquid-account-provider.tsx",
+    "src/lib/hyperliquid/perp-order-calculator.ts",
+    "src/app/hyperliquid/[coin]/page.tsx",
+    "src/components/hyperliquid/perp-order-preview-sheet.tsx",
     "src/app/api/user/wallet/route.ts",
     "src/server/repositories/wallet-repository.ts",
   ];

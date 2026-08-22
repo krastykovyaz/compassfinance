@@ -70,13 +70,14 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
       const timestamp = Date.now();
       for (let i = 0; i < meta.universe.length; i++) {
         const coin = meta.universe[i].name;
+        const maxLeverage = meta.universe[i].maxLeverage;
         const ctx = assetCtxs[i];
         const price = toNumber(ctx.markPx);
         const prevDayPx = toNumber(ctx.prevDayPx);
         const volume24h = toNumber(ctx.dayNtlVlm);
         const fundingRate = toNumber(ctx.funding);
 
-        if ([price, prevDayPx, volume24h, fundingRate].some(Number.isNaN)) {
+        if ([price, prevDayPx, volume24h, fundingRate].some(Number.isNaN) || !Number.isFinite(maxLeverage)) {
           console.error(`[hyperliquid-service] skipping ${coin}: non-numeric field in asset context`);
           continue;
         }
@@ -94,6 +95,7 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
           volume24h,
           fundingRate,
           timestamp,
+          maxLeverage,
         });
       }
       return result;

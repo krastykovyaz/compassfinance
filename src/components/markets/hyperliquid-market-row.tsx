@@ -1,11 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useHyperliquidOrderBook } from "@/lib/hyperliquid/use-hyperliquid-order-book";
 import type { HyperliquidMarketSnapshot } from "@/lib/hyperliquid/hyperliquid-types";
 import { formatCurrency, formatSignedPercent, cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/locale-provider";
+
+// Phase 3 (order preview) only covers these two markets so far — every
+// other Hyperliquid perpetual keeps showing the order book only, with no
+// dead link to a trading page that doesn't support it yet.
+const TRADABLE_COINS = new Set(["BTC", "ETH"]);
 
 // Deliberately NOT a variant of AssetRow: this row has no favorite star,
 // no "in portfolio" badge, no lock badge — Hyperliquid perpetual markets
@@ -90,6 +96,14 @@ export function HyperliquidMarketRow({ market }: { market: HyperliquidMarketSnap
         </div>
       </button>
       <OrderBookLevels coin={market.assetId} expanded={expanded} />
+      {TRADABLE_COINS.has(market.assetId) ? (
+        <Link
+          href={`/hyperliquid/${market.assetId.toLowerCase()}`}
+          className="mt-1.5 block rounded-xl bg-surface-2 px-3 py-2 text-center text-[13px] font-medium text-ink active:opacity-80"
+        >
+          {t("market.trade")}
+        </Link>
+      ) : null}
     </div>
   );
 }

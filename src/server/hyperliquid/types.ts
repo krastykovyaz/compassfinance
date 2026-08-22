@@ -14,6 +14,10 @@ export type HyperliquidMarketSnapshot = {
   volume24h: number;
   fundingRate: number;
   timestamp: number;
+  /** From Hyperliquid's meta.universe — the maximum leverage this market
+   * permits. Used by the Phase 3 order-preview calculator; never used to
+   * gate anything about the market snapshot itself. */
+  maxLeverage: number;
 };
 
 /** Deliberately identical shape to src/server/market/service.ts's CandlePoint

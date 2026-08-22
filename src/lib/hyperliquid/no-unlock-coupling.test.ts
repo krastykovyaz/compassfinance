@@ -50,6 +50,36 @@ describe("The wallet layer never touches Paper Trading or the learning/unlock sy
   });
 });
 
+// Phase 3 (order preview) guardrail: stays isolated from Paper
+// Trading/unlock like every prior phase, AND never references anything
+// that would submit a real order — no signing, no Hyperliquid "exchange"
+// (write) endpoint, no order-writing action name.
+describe("Hyperliquid Trading Phase 3 (order preview) stays isolated and never submits a real order", () => {
+  const files = [
+    "src/lib/hyperliquid/perp-order-calculator.ts",
+    "src/app/hyperliquid/[coin]/page.tsx",
+    "src/components/hyperliquid/perp-order-preview-sheet.tsx",
+  ];
+
+  it("imports nothing paper/unlock-related", () => {
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      expect(src).not.toMatch(/paper/i);
+      expect(src).not.toMatch(/\bunlock/i);
+    }
+  });
+
+  it("never references a Hyperliquid order-writing action or endpoint", () => {
+    const DANGEROUS = [/\/exchange\b/i, /"order"/i, /updateLeverage/i, /cancelOrder/i, /placeOrder/i, /submitOrder/i];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const pattern of DANGEROUS) {
+        expect(src).not.toMatch(pattern);
+      }
+    }
+  });
+});
+
 describe("getInvestmentAccess is unaffected by HYPERLIQUID_ENABLED", () => {
   const ORIGINAL_ENV = { ...process.env };
 
