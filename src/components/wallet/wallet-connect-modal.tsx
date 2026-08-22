@@ -98,11 +98,11 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
             <div className="mt-3 flex justify-center">
               {qrSvg ? (
                 <div
-                  className="hidden h-44 w-44 sm:block [&_svg]:h-full [&_svg]:w-full"
+                  className="h-44 w-44 [&_svg]:h-full [&_svg]:w-full"
                   dangerouslySetInnerHTML={{ __html: qrSvg }}
                 />
               ) : (
-                <div className="hidden h-44 w-44 items-center justify-center sm:flex">
+                <div className="flex h-44 w-44 items-center justify-center">
                   <Loader2 size={20} className="animate-spin text-ink-faint" />
                 </div>
               )}
