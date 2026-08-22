@@ -4,6 +4,8 @@ import { getServerLearningProgress } from "@/server/repositories/learning-reposi
 import { getInvestmentAccess } from "@/lib/learning/unlocks";
 import { getAsset, isAssetId } from "@/lib/assets/catalog";
 import { getAchievement } from "@/lib/learning/achievements";
+import { toSupportedLocale } from "@/lib/i18n/translate";
+import type { Locale } from "@/lib/i18n/types";
 
 export class ShareError extends Error {}
 
@@ -80,6 +82,10 @@ export type PublicShare = {
   achievementTitle: string | null;
   /** A public display name only — never email, never internal user id. */
   sharerName: string;
+  /** The sharer's own account language — so whoever opens this link sees
+   * it in the same language the sharer was using, not their own browser
+   * default. Never falls back to anything other than a supported Locale. */
+  locale: Locale;
 };
 
 /**
@@ -94,7 +100,7 @@ export async function getPublicShare(shareToken: string): Promise<PublicShare | 
     select: {
       achievementId: true,
       assetId: true,
-      user: { select: { name: true } },
+      user: { select: { name: true, locale: true } },
     },
   });
   if (!share) return null;
@@ -109,5 +115,6 @@ export async function getPublicShare(shareToken: string): Promise<PublicShare | 
     assetName: asset?.name ?? null,
     achievementTitle: achievement?.title ?? null,
     sharerName: share.user.name?.trim() || "A CompassFinance learner",
+    locale: toSupportedLocale(share.user.locale),
   };
 }

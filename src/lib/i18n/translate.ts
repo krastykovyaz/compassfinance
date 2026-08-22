@@ -66,3 +66,15 @@ export function resolveInitialLocale(
 export function isSupportedLocale(value: string): value is Locale {
   return (SUPPORTED_LOCALES as string[]).includes(value);
 }
+
+/**
+ * Coerces a raw, possibly-absent locale value (e.g. a User.locale DB
+ * column, which is a plain nullable string) into a real Locale, falling
+ * back to English. Used wherever a *stored* locale needs to drive a
+ * server-rendered page for a visitor who isn't the one who set it — e.g.
+ * rendering a shared/invite link in the sharer's language rather than the
+ * viewer's.
+ */
+export function toSupportedLocale(value: string | null | undefined): Locale {
+  return value && isSupportedLocale(value) ? value : "en";
+}

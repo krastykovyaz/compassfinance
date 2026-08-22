@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const userStore = new Map<
   string,
-  { id: string; referralCode: string | null; referredByUserId: string | null }
+  { id: string; referralCode: string | null; referredByUserId: string | null; locale: string | null }
 >();
 
 const prismaMock = {
@@ -68,6 +68,7 @@ vi.mock("@/server/db/prisma", () => ({
 import {
   getOrCreateReferralCode,
   getUserIdByReferralCode,
+  getReferrerLocaleByCode,
   attributeReferral,
   getReferralCount,
 } from "./referral-repository";
@@ -75,8 +76,8 @@ import {
 beforeEach(() => {
   userStore.clear();
   vi.clearAllMocks();
-  userStore.set("user-1", { id: "user-1", referralCode: null, referredByUserId: null });
-  userStore.set("user-2", { id: "user-2", referralCode: null, referredByUserId: null });
+  userStore.set("user-1", { id: "user-1", referralCode: null, referredByUserId: null, locale: null });
+  userStore.set("user-2", { id: "user-2", referralCode: null, referredByUserId: null, locale: null });
 });
 
 describe("getOrCreateReferralCode", () => {
@@ -110,6 +111,29 @@ describe("getUserIdByReferralCode", () => {
   });
 });
 
+describe("getReferrerLocaleByCode", () => {
+  it("returns the referrer's stored locale", async () => {
+    userStore.get("user-1")!.locale = "ru";
+    const code = await getOrCreateReferralCode("user-1");
+    expect(await getReferrerLocaleByCode(code)).toBe("ru");
+  });
+
+  it("defaults to English when the referrer exists but has no locale set", async () => {
+    const code = await getOrCreateReferralCode("user-1");
+    expect(await getReferrerLocaleByCode(code)).toBe("en");
+  });
+
+  it("defaults to English when the referrer's stored value isn't a supported locale", async () => {
+    userStore.get("user-1")!.locale = "de";
+    const code = await getOrCreateReferralCode("user-1");
+    expect(await getReferrerLocaleByCode(code)).toBe("en");
+  });
+
+  it("returns null for a code that doesn't exist", async () => {
+    expect(await getReferrerLocaleByCode("NOTAREAL")).toBeNull();
+  });
+});
+
 describe("attributeReferral — self-referral and duplicate prevention", () => {
   it("attributes a new user to their real referrer", async () => {
     await attributeReferral("user-2", "user-1");
@@ -123,7 +147,7 @@ describe("attributeReferral — self-referral and duplicate prevention", () => {
 
   it("prevents duplicate attribution — a second call for an already-attributed user is a no-op", async () => {
     await attributeReferral("user-2", "user-1");
-    userStore.set("user-3", { id: "user-3", referralCode: null, referredByUserId: null });
+    userStore.set("user-3", { id: "user-3", referralCode: null, referredByUserId: null, locale: null });
     // Simulate a second, different referrer trying to claim user-2 after
     // the fact — the null-guard means this can never succeed.
     await attributeReferral("user-2", "user-3");

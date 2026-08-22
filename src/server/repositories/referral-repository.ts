@@ -1,5 +1,7 @@
 import { randomBytes } from "crypto";
 import { prisma } from "@/server/db/prisma";
+import { toSupportedLocale } from "@/lib/i18n/translate";
+import type { Locale } from "@/lib/i18n/types";
 
 const CODE_LENGTH = 8;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I — avoids visually-ambiguous codes in a shared link
@@ -50,6 +52,21 @@ export async function getUserIdByReferralCode(code: string): Promise<string | nu
     select: { id: true },
   });
   return user?.id ?? null;
+}
+
+/**
+ * Returns the referrer's account language for an invite code — null means
+ * the code doesn't exist at all (distinct from "exists but has no locale
+ * set", which resolves to English). Never returns the referrer's name,
+ * email, or id — same public-safety stance as getUserIdByReferralCode.
+ */
+export async function getReferrerLocaleByCode(code: string): Promise<Locale | null> {
+  const user = await prisma.user.findUnique({
+    where: { referralCode: code },
+    select: { locale: true },
+  });
+  if (!user) return null;
+  return toSupportedLocale(user.locale);
 }
 
 /**

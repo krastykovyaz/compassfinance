@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getPublicShare } from "@/server/services/achievement-sharing-service";
 import { ShareLanding } from "@/components/invite/share-landing";
+import { translate, toSupportedLocale } from "@/lib/i18n/translate";
 
 export async function generateMetadata({
   params,
@@ -14,12 +15,17 @@ export async function generateMetadata({
     return { title: "CompassFinance", description: "CompassFinance — learn markets and practice investing." };
   }
 
+  // Rendered in the SHARER's own account language — same idea as the
+  // message text they typed when they shared it (see
+  // use-achievement-share.ts) — never the visitor's browser locale, which
+  // for an anonymous link recipient means nothing anyway.
+  const locale = share.locale;
   const title = share.assetName
-    ? `CompassFinance — ${share.assetName} unlocked`
+    ? `CompassFinance — ${share.assetName}`
     : `CompassFinance — ${share.achievementTitle}`;
   const description = share.assetName
-    ? `${share.sharerName} completed the ${share.assetName} learning path and unlocked paper trading.`
-    : `${share.sharerName} earned the "${share.achievementTitle}" achievement on CompassFinance.`;
+    ? `${translate(locale, "achievementShare.assetMessagePrefix")} ${share.assetName} ${translate(locale, "achievementShare.assetMessageMiddle")} ${translate(locale, "achievementShare.assetMessageSuffix")}`
+    : `${translate(locale, "achievementShare.achievementMessagePrefix")} ${share.achievementTitle} ${translate(locale, "achievementShare.achievementMessageSuffix")}`;
 
   return {
     title,
@@ -31,9 +37,9 @@ export async function generateMetadata({
 
 // Public page — `share` only ever carries the public-safe fields
 // getPublicShare() selects (see that function's doc comment): asset/
-// achievement name and a display name that falls back to a generic
-// label. No email, no internal id, no portfolio value, no holdings, no
-// trading history ever reaches this page.
+// achievement name, a display name that falls back to a generic label,
+// and the sharer's account language. No email, no internal id, no
+// portfolio value, no holdings, no trading history ever reaches this page.
 export default async function AchievementSharePage({
   params,
 }: {
@@ -41,5 +47,5 @@ export default async function AchievementSharePage({
 }) {
   const { token } = await params;
   const share = await getPublicShare(token);
-  return <ShareLanding share={share} />;
+  return <ShareLanding share={share} locale={toSupportedLocale(share?.locale)} />;
 }

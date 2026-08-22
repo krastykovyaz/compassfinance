@@ -1,5 +1,6 @@
 import { renderShareImage, SHARE_IMAGE_SIZE } from "@/lib/share/render-share-image";
-import { getUserIdByReferralCode } from "@/server/repositories/referral-repository";
+import { getReferrerLocaleByCode } from "@/server/repositories/referral-repository";
+import { translate, toSupportedLocale } from "@/lib/i18n/translate";
 
 export const size = SHARE_IMAGE_SIZE;
 export const contentType = "image/png";
@@ -10,11 +11,11 @@ export default async function InviteOpengraphImage({
   params: Promise<{ code: string }>;
 }) {
   const { code } = await params;
-  const valid = (await getUserIdByReferralCode(code)) !== null;
+  const referrerLocale = await getReferrerLocaleByCode(code);
+  const valid = referrerLocale !== null;
+  const locale = toSupportedLocale(referrerLocale);
   return renderShareImage(
-    valid ? "You're invited" : "CompassFinance",
-    valid
-      ? "Learn markets and practice investing with a real paper portfolio."
-      : "Learn markets and practice investing."
+    valid ? translate(locale, "invite.title") : "CompassFinance",
+    valid ? translate(locale, "invite.subtitle") : "Learn markets and practice investing."
   );
 }

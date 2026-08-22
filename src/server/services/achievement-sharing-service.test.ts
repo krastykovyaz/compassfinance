@@ -96,7 +96,7 @@ describe("getPublicShare — never leaks private data", () => {
     prismaMock.achievementShare.findUnique.mockResolvedValue({
       achievementId: "INVESTMENT_UNLOCKED",
       assetId: "nasdaq",
-      user: { name: "Alex Johnson" },
+      user: { name: "Alex Johnson", locale: "fr" },
     });
     const share = await getPublicShare("some-token");
     expect(share).toEqual({
@@ -105,6 +105,7 @@ describe("getPublicShare — never leaks private data", () => {
       assetName: "Nasdaq 100",
       achievementTitle: null,
       sharerName: "Alex Johnson",
+      locale: "fr",
     });
     // No email, no internal id, no portfolio/holdings field anywhere.
     expect(Object.keys(share!)).not.toContain("email");
@@ -116,10 +117,26 @@ describe("getPublicShare — never leaks private data", () => {
     prismaMock.achievementShare.findUnique.mockResolvedValue({
       achievementId: "FIRST_LESSON",
       assetId: null,
-      user: { name: null },
+      user: { name: null, locale: null },
     });
     const share = await getPublicShare("some-token");
     expect(share?.sharerName).toBe("A CompassFinance learner");
+  });
+
+  it("defaults locale to English when the sharer has none set, and never leaks an unsupported locale value through", async () => {
+    prismaMock.achievementShare.findUnique.mockResolvedValue({
+      achievementId: "FIRST_LESSON",
+      assetId: null,
+      user: { name: "Alex", locale: null },
+    });
+    expect((await getPublicShare("some-token"))?.locale).toBe("en");
+
+    prismaMock.achievementShare.findUnique.mockResolvedValue({
+      achievementId: "FIRST_LESSON",
+      assetId: null,
+      user: { name: "Alex", locale: "de" },
+    });
+    expect((await getPublicShare("some-token"))?.locale).toBe("en");
   });
 
   it("returns null for a token that doesn't exist", async () => {
