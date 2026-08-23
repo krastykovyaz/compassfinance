@@ -4,10 +4,14 @@
 // extended (or a market added/removed) without any UI change.
 
 export type HyperliquidMarketSnapshot = {
-  /** Hyperliquid's own coin symbol, e.g. "BTC" — the id this market is addressed by throughout. */
+  /** Hyperliquid's own coin symbol, e.g. "BTC" — technical only, never shown as a primary label. */
   assetId: string;
   symbol: string;
+  /** Human-readable name from ASSET_CATALOG (e.g. "Bitcoin"), never the
+   * raw Hyperliquid coin symbol. */
   displayName: string;
+  /** The CompassFinance catalog id (e.g. "btc") this market belongs to. */
+  compassAssetId: string;
   price: number;
   change24h: number;
   changePercent24h: number;

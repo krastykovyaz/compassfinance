@@ -5,9 +5,19 @@
 // shape for the existing Yahoo pipeline.
 
 export type HyperliquidMarketSnapshot = {
-  assetId: string; // Hyperliquid's own coin symbol, e.g. "BTC"
+  assetId: string; // Hyperliquid's own coin symbol, e.g. "BTC" — technical only, never shown as a primary label
   symbol: string;
+  /** Human-readable name from CompassFinance's own asset catalog (e.g.
+   * "Bitcoin"), NOT the raw Hyperliquid coin symbol — this is what the UI
+   * shows as the primary label. Only ever a real ASSET_CATALOG name: this
+   * type is only ever constructed for a market that already resolved to
+   * a CompassFinance asset (see compassAssetId), never a raw passthrough. */
   displayName: string;
+  /** The CompassFinance catalog id (e.g. "btc") this market belongs to —
+   * the one field to route/link/look up catalog details by. Never the
+   * Hyperliquid coin symbol, so routing never depends on a compass slug
+   * happening to match a lowercased coin symbol by coincidence. */
+  compassAssetId: string;
   price: number;
   change24h: number;
   changePercent24h: number;

@@ -10,7 +10,8 @@
 
 import { getOrFetch, invalidate } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
-import { isTradableHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
+import { isTradableHyperliquidCoin, getAssetIdForHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
+import { getAsset } from "@/lib/assets/catalog";
 import { getHyperliquidUniverse } from "./markets";
 import {
   fetchMetaAndAssetCtxs,
@@ -78,6 +79,17 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
       const timestamp = Date.now();
       for (let i = 0; i < meta.universe.length; i++) {
         const coin = meta.universe[i].name;
+
+        // Filter to approved CompassFinance assets only — Hyperliquid's
+        // universe has ~200 markets total, and this app must never show
+        // "a list of raw Hyperliquid markets" (see asset-mapping.ts for
+        // exactly which coins are approved and why). This is the one
+        // place that decides what Markets is even allowed to see.
+        const compassAssetId = getAssetIdForHyperliquidCoin(coin);
+        if (!compassAssetId) continue;
+        const catalogEntry = getAsset(compassAssetId);
+        if (!catalogEntry) continue; // defensive — mapping should never point at a missing catalog entry
+
         const maxLeverage = meta.universe[i].maxLeverage;
         const szDecimals = meta.universe[i].szDecimals;
         const ctx = assetCtxs[i];
@@ -101,7 +113,8 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
         result.push({
           assetId: coin,
           symbol: coin,
-          displayName: coin,
+          displayName: catalogEntry.name,
+          compassAssetId,
           price,
           change24h,
           changePercent24h,

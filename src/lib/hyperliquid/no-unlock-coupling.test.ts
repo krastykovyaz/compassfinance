@@ -74,6 +74,8 @@ describe("Hyperliquid Trading (preview + real execution) stays isolated and cent
     "src/components/hyperliquid/perp-order-preview-sheet.tsx",
     "src/components/hyperliquid/close-position-modal.tsx",
     "src/components/portfolio/hyperliquid-account-panel.tsx",
+    "src/lib/hyperliquid/asset-mapping.ts",
+    "src/components/hyperliquid/asset-details-panel.tsx",
   ];
 
   it("imports nothing paper/unlock-related", () => {

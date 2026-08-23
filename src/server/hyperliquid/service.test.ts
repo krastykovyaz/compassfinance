@@ -123,6 +123,53 @@ describe("getHyperliquidMarkets", () => {
     expect(result.status).toBe("unavailable");
   });
 
+  it("Phase 7: filters out coins with no approved CompassFinance mapping — Hyperliquid's raw universe never leaks into Markets", async () => {
+    fetchMetaAndAssetCtxs.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          universe: [
+            { name: "BTC", szDecimals: 5, maxLeverage: 50 },
+            { name: "SOL", szDecimals: 2, maxLeverage: 20 },
+            { name: "SPX", szDecimals: 0, maxLeverage: 10 }, // SPX6900 meme coin, not the S&P 500
+            { name: "ETH", szDecimals: 4, maxLeverage: 50 },
+            { name: "PAXG", szDecimals: 2, maxLeverage: 5 }, // gold-backed token, not gold
+          ],
+        },
+        [
+          RAW_ASSET_CTXS[0],
+          { ...RAW_ASSET_CTXS[0], markPx: "150" },
+          { ...RAW_ASSET_CTXS[0], markPx: "5000" },
+          RAW_ASSET_CTXS[1],
+          { ...RAW_ASSET_CTXS[0], markPx: "2400" },
+        ],
+      ],
+    });
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.markets.map((m) => m.assetId).sort()).toEqual(["BTC", "ETH"]);
+    }
+  });
+
+  it("Phase 7: displayName is the catalog's human-readable name, and compassAssetId routes back to the catalog id — never the raw Hyperliquid ticker as the primary label", async () => {
+    fetchMetaAndAssetCtxs.mockResolvedValue({ ok: true, data: [RAW_META, RAW_ASSET_CTXS] });
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const btc = result.markets.find((m) => m.assetId === "BTC")!;
+      const eth = result.markets.find((m) => m.assetId === "ETH")!;
+      expect(btc.displayName).toBe("Bitcoin");
+      expect(btc.compassAssetId).toBe("btc");
+      expect(eth.displayName).toBe("Ethereum");
+      expect(eth.compassAssetId).toBe("eth");
+    }
+  });
+
   it("caches within the TTL — a second call doesn't refetch", async () => {
     fetchMetaAndAssetCtxs.mockResolvedValue({ ok: true, data: [RAW_META, RAW_ASSET_CTXS] });
 

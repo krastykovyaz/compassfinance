@@ -29,7 +29,9 @@ import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-pro
 import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
 import { resolveHyperliquidPanelView } from "@/components/portfolio/hyperliquid-account-panel";
-import { getHyperliquidCoinForAsset } from "@/lib/hyperliquid/asset-mapping";
+import { getHyperliquidCoinForAsset, isTradeableAssetId } from "@/lib/hyperliquid/asset-mapping";
+import { getAsset } from "@/lib/assets/catalog";
+import { AssetDetailsPanel } from "@/components/hyperliquid/asset-details-panel";
 import {
   buildPerpOrderPreview,
   type PerpOrderValidationError,
@@ -40,7 +42,6 @@ import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliqui
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
-const SUPPORTED_SLUGS = ["btc", "eth"] as const;
 const LEVERAGE_PRESETS = [2, 5, 10, 20];
 const MARGIN_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
 
@@ -76,10 +77,14 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [executionState, setExecutionState] = useState<PerpOrderExecutionUiState>({ stage: "idle" });
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const coin = getHyperliquidCoinForAsset(slug);
   const market = coin ? (markets.find((m) => m.assetId === coin) ?? null) : null;
-  const displayName = coin ?? rawSlug.toUpperCase();
+  const catalogEntry = getAsset(slug);
+  // Human-readable primary label — never the raw Hyperliquid ticker (that
+  // stays available only in the Details panel below).
+  const displayName = catalogEntry?.name ?? rawSlug.toUpperCase();
 
   const availableBalance = snapshot?.withdrawableBalance ?? 0;
   const maxLeverage = market?.maxLeverage ?? 1;
@@ -199,10 +204,10 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     setExecutionState({ stage: "idle" });
   }
 
-  if (!(SUPPORTED_SLUGS as readonly string[]).includes(slug) || !coin) {
+  if (!isTradeableAssetId(slug) || !coin) {
     return (
       <AppShell>
-        <Header title={rawSlug.toUpperCase()} backHref="/markets" />
+        <Header title={catalogEntry?.name ?? rawSlug.toUpperCase()} backHref="/markets" />
         <div className="px-5">
           <Card>
             <p className="text-[14px] text-ink-muted">This market isn&apos;t available for Hyperliquid trading.</p>
@@ -214,7 +219,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
 
   return (
     <AppShell>
-      <Header title={`${displayName}-PERP`} backHref="/markets" />
+      <Header title={displayName} backHref="/markets" />
       <div className="space-y-4 px-5">
         {market ? (
           <div>
@@ -226,7 +231,26 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
           </div>
         ) : null}
 
-        <PriceChart slug={slug as "btc" | "eth"} />
+        <div>
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((v) => !v)}
+            className="text-[12px] font-medium text-ink-muted underline-offset-2 active:opacity-70"
+          >
+            {detailsOpen ? t("market.hideDetails") : t("market.showDetails")}
+          </button>
+          {detailsOpen ? (
+            <AssetDetailsPanel
+              name={displayName}
+              underlying={catalogEntry?.name ?? displayName}
+              technicalTicker={`${coin}-PERP`}
+              instrumentType={t("market.instrumentTypePerpetual")}
+              dataSource="Hyperliquid"
+            />
+          ) : null}
+        </div>
+
+        <PriceChart slug={slug} />
 
         {view === "not-connected" ? (
           <Card>
