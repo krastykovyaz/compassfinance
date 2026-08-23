@@ -670,6 +670,38 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     expect(postExchange).not.toHaveBeenCalled();
   });
 
+  // Close Position feature: a reduce-only order can only shrink an
+  // existing position, never add exposure, so it can never legitimately
+  // require additional margin. Without this exemption, a user with fully
+  // -allocated margin (the common case right before closing a losing
+  // position) could get wrongly blocked from closing it at all.
+  it("never applies the balance pre-flight check to a reduce-only order, even with $0 available", async () => {
+    mockAccountBalance("0");
+    postExchange.mockResolvedValue({
+      ok: true,
+      data: { status: "ok", response: { type: "order", data: { statuses: [{ resting: { oid: 1 } }] } } },
+    });
+    const reduceOnlyAction = {
+      ...ORDER_ACTION,
+      orders: [{ ...ORDER_ACTION.orders[0], r: true }],
+    };
+
+    const result = await submitHyperliquidExchangeAction("0xabc", reduceOnlyAction, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "resting", orderId: 1 });
+    expect(fetchClearinghouseState).not.toHaveBeenCalled();
+    expect(postExchange).toHaveBeenCalled();
+  });
+
+  it("still applies the balance pre-flight check to a normal (non reduce-only) order — the exemption isn't a blanket bypass", async () => {
+    mockAccountBalance("1"); // same underfunded case as the test above, but r:false this time
+
+    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+    expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+    expect(postExchange).not.toHaveBeenCalled();
+  });
+
   it("uses a FRESH balance check on every call, never a cached one — two calls hit fetchClearinghouseState twice", async () => {
     mockAccountBalance("100000");
     postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });

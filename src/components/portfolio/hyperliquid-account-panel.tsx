@@ -7,6 +7,10 @@ import { DarkCard } from "@/components/ui/card";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
 import { useHyperliquidAccount, HyperliquidAccountStatus } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provider";
+import { ClosePositionModal, type CloseExecutionUiState } from "@/components/hyperliquid/close-position-modal";
+import { closePosition, closingOrderParamsForPosition } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import type { HyperliquidPosition, HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -61,7 +65,65 @@ export function HyperliquidAccountPanel() {
   const { status: sessionStatus } = useSession();
   const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage, refresh } = useHyperliquidAccount();
+  const { agentStatus, agentWallet } = useHyperliquidAgent();
   const [modalOpen, setModalOpen] = useState(false);
+  const [closingPosition, setClosingPosition] = useState<HyperliquidPosition | null>(null);
+  const [closeExecutionState, setCloseExecutionState] = useState<CloseExecutionUiState>({ stage: "idle" });
+
+  // Fetches a FRESH price/asset snapshot right before signing — same
+  // stance as the trading page's handleConfirmAndSign, since that's what
+  // the closing order's slippage-bounded price is derived from. `side`/
+  // `sizeUnits` are never user-editable — always derived from the real
+  // position itself.
+  async function handleConfirmClose() {
+    if (!closingPosition || !address || !agentWallet) return;
+
+    setCloseExecutionState({ stage: "signing" });
+
+    let freshMarket: { price: number; assetIndex: number; szDecimals: number } | null = null;
+    let isTestnet = false;
+    try {
+      const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
+      const json = (await res.json()) as { isTestnet?: boolean; result: HyperliquidMarketsFetchResult };
+      isTestnet = Boolean(json.isTestnet);
+      if (json.result.status === "ok") {
+        const fresh = json.result.markets.find((m) => m.assetId === closingPosition.coin);
+        if (fresh) freshMarket = { price: fresh.price, assetIndex: fresh.assetIndex, szDecimals: fresh.szDecimals };
+      }
+    } catch {
+      // fall through — freshMarket stays null, handled below
+    }
+
+    if (!freshMarket) {
+      setCloseExecutionState({
+        stage: "done",
+        result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
+      });
+      return;
+    }
+
+    const { side, sizeUnits } = closingOrderParamsForPosition(closingPosition.size);
+    const result = await closePosition({
+      wallet: agentWallet,
+      address,
+      assetIndex: freshMarket.assetIndex,
+      szDecimals: freshMarket.szDecimals,
+      side,
+      sizeUnits,
+      markPrice: freshMarket.price,
+      isTestnet,
+    });
+
+    setCloseExecutionState({ stage: "done", result });
+    if (result.status !== "wallet-rejected" && result.status !== "rejected") {
+      refresh();
+    }
+  }
+
+  function handleCloseModalDismiss() {
+    setClosingPosition(null);
+    setCloseExecutionState({ stage: "idle" });
+  }
 
   const view = resolveHyperliquidPanelView({ walletStatus, address, sessionStatus, accountStatus, errorMessage });
 
@@ -158,6 +220,7 @@ export function HyperliquidAccountPanel() {
   if (!snapshot) return null;
 
   return (
+    <>
     <DarkCard>
       <div className="flex items-center justify-between">
         <p className="text-[14px] font-semibold text-dark-ink">{shortAddress(connectedAddress)}</p>
@@ -216,6 +279,15 @@ export function HyperliquidAccountPanel() {
                       {p.liquidationPrice !== null ? formatCurrency(p.liquidationPrice) : "N/A"}
                     </span>
                   </div>
+                  <button
+                    onClick={() => {
+                      setCloseExecutionState({ stage: "idle" });
+                      setClosingPosition(p);
+                    }}
+                    className="mt-2 w-full rounded-lg border border-dark-border px-3 py-1.5 text-[12px] font-medium text-dark-ink active:opacity-80"
+                  >
+                    {t("hyperliquidAccount.closePosition")}
+                  </button>
                 </div>
               );
             })}
@@ -263,5 +335,15 @@ export function HyperliquidAccountPanel() {
         )}
       </div>
     </DarkCard>
+    {closingPosition ? (
+      <ClosePositionModal
+        position={closingPosition}
+        agentReady={agentStatus === "approved"}
+        executionState={closeExecutionState}
+        onConfirm={() => void handleConfirmClose()}
+        onClose={handleCloseModalDismiss}
+      />
+    ) : null}
+    </>
   );
 }

@@ -14,6 +14,8 @@ import {
   createHyperliquidWalletAdapter,
   signAndSubmitPerpOrder,
   signingErrorDetail,
+  closePosition,
+  closingOrderParamsForPosition,
   SLIPPAGE_TOLERANCE,
 } from "./hyperliquid-order-signer";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
@@ -152,6 +154,31 @@ describe("buildMarketOrderAction", () => {
     });
     const orders = action.orders as Record<string, unknown>[];
     expect(orders[0].b).toBe(false);
+  });
+
+  it("sets r:true when reduceOnly is passed — closing a position must never be able to open new exposure", () => {
+    const action = buildMarketOrderAction({
+      assetIndex: 0,
+      side: "short",
+      markPrice: 60000,
+      sizeUnits: 0.01,
+      szDecimals: 5,
+      reduceOnly: true,
+    });
+    const orders = action.orders as Record<string, unknown>[];
+    expect(orders[0].r).toBe(true);
+  });
+
+  it("defaults r:false when reduceOnly is omitted — unchanged prior behavior for opening/adding to a position", () => {
+    const action = buildMarketOrderAction({
+      assetIndex: 0,
+      side: "short",
+      markPrice: 60000,
+      sizeUnits: 0.01,
+      szDecimals: 5,
+    });
+    const orders = action.orders as Record<string, unknown>[];
+    expect(orders[0].r).toBe(false);
   });
 
   it("formats price/size to real, tick-valid strings via the tick/lot rules (not raw floats)", () => {
@@ -353,5 +380,86 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
     const result = await signAndSubmitPerpOrder(BASE_PARAMS);
 
     expect(result).toEqual({ status: "filled", orderId: 5, totalSize: 0.01, avgPrice: 60050 });
+  });
+});
+
+describe("closingOrderParamsForPosition — pure derivation, never user-editable", () => {
+  it("a long position (positive size) closes via a SHORT of the same absolute size", () => {
+    expect(closingOrderParamsForPosition(0.00126)).toEqual({ side: "short", sizeUnits: 0.00126 });
+  });
+
+  it("a short position (negative size) closes via a LONG of the same absolute size", () => {
+    expect(closingOrderParamsForPosition(-0.5)).toEqual({ side: "long", sizeUnits: 0.5 });
+  });
+
+  it("treats an exact-zero size as a long-side close (>=0), matching HyperliquidPosition's own sign convention", () => {
+    expect(closingOrderParamsForPosition(0)).toEqual({ side: "short", sizeUnits: 0 });
+  });
+});
+
+describe("closePosition — orchestration", () => {
+  const CLOSE_PARAMS = {
+    wallet: createHyperliquidWalletAdapter(mockProvider(), "0xabc"),
+    address: "0xabc",
+    assetIndex: 0,
+    szDecimals: 5,
+    side: "short" as const,
+    sizeUnits: 0.00126,
+    markPrice: 60000,
+    isTestnet: false,
+  };
+  const SIGNATURE = { r: "0xaaa", s: "0xbbb", v: 27 };
+
+  beforeEach(() => {
+    signL1Action.mockReset();
+  });
+
+  it("signs exactly one reduce-only order — no leverage step at all, closing never changes leverage", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 } })));
+
+    const result = await closePosition(CLOSE_PARAMS);
+
+    expect(signL1Action).toHaveBeenCalledTimes(1);
+    const signed = signL1Action.mock.calls[0][0];
+    expect(signed.action.type).toBe("order");
+    expect((signed.action.orders as Record<string, unknown>[])[0].r).toBe(true);
+    expect(result).toEqual({ status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 });
+  });
+
+  it("classifies a wallet rejection distinctly, without ever calling fetch", async () => {
+    signL1Action.mockRejectedValue({ code: 4001, message: "User rejected" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await closePosition(CLOSE_PARAMS);
+
+    expect(result).toEqual({ status: "wallet-rejected" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the real underlying error on a non-rejection signing failure", async () => {
+    signL1Action.mockRejectedValue(new Error("boom"));
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await closePosition(CLOSE_PARAMS);
+
+    expect(result).toEqual({
+      status: "rejected",
+      reason: "invalid-request",
+      message: "Couldn't sign the close order: boom",
+    });
+  });
+
+  it("classifies a Hyperliquid-side rejection the same way opening an order does", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ result: { status: "hyperliquid-rejected", message: "no position to reduce" } }))
+    );
+
+    const result = await closePosition(CLOSE_PARAMS);
+
+    expect(result).toEqual({ status: "hyperliquid-rejected", message: "no position to reduce" });
   });
 });

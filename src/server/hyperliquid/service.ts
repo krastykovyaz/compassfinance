@@ -442,6 +442,19 @@ function extractOrderNotional(action: Record<string, unknown>): number | null {
   return Number.isFinite(price) && Number.isFinite(size) ? price * size : null;
 }
 
+/** A reduce-only order can only shrink/close an existing position, never
+ * add new exposure — Hyperliquid itself enforces this, so it can never
+ * require additional margin. The balance pre-flight check exists purely
+ * to protect an OPENING order from being placed against insufficient
+ * funds; applying it to a close as well could trap a user in a losing,
+ * fully-margined position they can't get out of. */
+function isReduceOnlyOrder(action: Record<string, unknown>): boolean {
+  if (action.type !== "order") return false;
+  const orders = action.orders;
+  if (!Array.isArray(orders) || orders.length !== 1) return false;
+  return (orders[0] as Record<string, unknown>).r === true;
+}
+
 type RawOrderStatus =
   | { resting: { oid: number } }
   | { filled: { totalSz: string; avgPx: string; oid: number } }
@@ -552,7 +565,7 @@ export async function submitHyperliquidExchangeAction(
     }
   }
 
-  if (action.type === "order") {
+  if (action.type === "order" && !isReduceOnlyOrder(action)) {
     const notional = extractOrderNotional(action);
     if (notional === null) {
       return { status: "rejected", reason: "invalid-request", message: "Invalid order parameters" };

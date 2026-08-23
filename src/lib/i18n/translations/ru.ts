@@ -204,6 +204,7 @@ const ru: Dictionary = {
     edit: "Изменить",
     of: "из",
     settings: "Настройки",
+    yes: "Да",
   },
   home: {
     goodMorning: "Доброе утро",
@@ -298,6 +299,14 @@ const ru: Dictionary = {
     noOpenOrders: "Нет открытых ордеров.",
     recentFills: "Последние сделки",
     noRecentFills: "Недавних сделок нет.",
+    closePosition: "Закрыть позицию",
+    closePositionTitle: "Закрыть позицию",
+    closePositionSize: "Размер",
+    closePositionType: "Тип",
+    closePositionMarket: "Рыночный",
+    closePositionReduceOnly: "Только уменьшение",
+    closePositionSigning: "Подтвердите закрытие в кошельке…",
+    closePositionApproveFirst: "Сначала разрешите торговлю на Hyperliquid на странице BTC-PERP или ETH-PERP, затем вернитесь, чтобы закрыть эту позицию.",
   },
   perpTrade: {
     long: "Лонг",

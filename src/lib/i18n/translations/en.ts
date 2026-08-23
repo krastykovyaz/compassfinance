@@ -207,6 +207,7 @@ const en = {
     edit: "Edit",
     of: "of",
     settings: "Settings",
+    yes: "Yes",
   },
   home: {
     goodMorning: "Good morning",
@@ -301,6 +302,14 @@ const en = {
     noOpenOrders: "No open orders.",
     recentFills: "Recent fills",
     noRecentFills: "No recent fills.",
+    closePosition: "Close Position",
+    closePositionTitle: "Close Position",
+    closePositionSize: "Size",
+    closePositionType: "Type",
+    closePositionMarket: "Market",
+    closePositionReduceOnly: "Reduce Only",
+    closePositionSigning: "Approve close in your wallet…",
+    closePositionApproveFirst: "Approve Hyperliquid Trading on the BTC-PERP or ETH-PERP page first, then come back to close this position.",
   },
   perpTrade: {
     long: "Long",

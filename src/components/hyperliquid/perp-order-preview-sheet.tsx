@@ -151,7 +151,7 @@ function stageLabel(stage: PerpOrderExecutionStage, t: (key: string) => string):
   }
 }
 
-function ResultBanner({ result }: { result: PerpOrderExecutionResult }) {
+export function ResultBanner({ result }: { result: PerpOrderExecutionResult }) {
   const { t } = useTranslation();
 
   if (result.status === "wallet-rejected") {

@@ -204,6 +204,7 @@ const fr: Dictionary = {
     edit: "Modifier",
     of: "sur",
     settings: "Paramètres",
+    yes: "Oui",
   },
   home: {
     goodMorning: "Bonjour",
@@ -298,6 +299,14 @@ const fr: Dictionary = {
     noOpenOrders: "Aucun ordre ouvert.",
     recentFills: "Transactions récentes",
     noRecentFills: "Aucune transaction récente.",
+    closePosition: "Clôturer la position",
+    closePositionTitle: "Clôturer la position",
+    closePositionSize: "Taille",
+    closePositionType: "Type",
+    closePositionMarket: "Marché",
+    closePositionReduceOnly: "Réduction uniquement",
+    closePositionSigning: "Approuvez la clôture dans votre portefeuille…",
+    closePositionApproveFirst: "Autorisez d'abord le trading Hyperliquid sur la page BTC-PERP ou ETH-PERP, puis revenez clôturer cette position.",
   },
   perpTrade: {
     long: "Long",

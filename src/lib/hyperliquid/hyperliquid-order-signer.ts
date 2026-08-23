@@ -100,6 +100,11 @@ export function buildMarketOrderAction(params: {
   sizeUnits: number;
   szDecimals: number;
   slippage?: number;
+  /** True for a position-closing order — Hyperliquid rejects it outright
+   * if it would ever increase exposure instead of only reducing/closing
+   * the existing position. Defaults false (opening/adding to a position),
+   * unchanged from prior behavior. */
+  reduceOnly?: boolean;
 }): Record<string, unknown> {
   const limitPrice = computeSlippageLimitPrice(params.markPrice, params.side, params.slippage);
   return {
@@ -110,7 +115,7 @@ export function buildMarketOrderAction(params: {
         b: params.side === "long",
         p: formatPrice(limitPrice, params.szDecimals),
         s: formatSize(params.sizeUnits, params.szDecimals),
-        r: false,
+        r: params.reduceOnly ?? false,
         t: { limit: { tif: "FrontendMarket" } },
       },
     ],
@@ -294,4 +299,55 @@ export async function signAndSubmitPerpOrder(params: {
 
   params.onStageChange?.("submitting-order");
   return submitSignedAction(params.address, orderAction, orderNonce, orderSignature);
+}
+
+/** Closes an existing position with a single reduce-only market order —
+ * no leverage step (closing never changes leverage), no user-editable
+ * size/side (both are derived from the position itself by the caller,
+ * never entered by the user). Side/size here must already be the
+ * CLOSING direction and exact position size — see
+ * closingOrderParamsForPosition() below for the one place that's
+ * derived, so it can never be gotten backwards by a caller. */
+export async function closePosition(params: {
+  wallet: AbstractWallet;
+  address: string;
+  assetIndex: number;
+  szDecimals: number;
+  side: PerpSide;
+  sizeUnits: number;
+  markPrice: number;
+  isTestnet: boolean;
+}): Promise<PerpOrderExecutionResult> {
+  const action = buildMarketOrderAction({
+    assetIndex: params.assetIndex,
+    side: params.side,
+    markPrice: params.markPrice,
+    sizeUnits: params.sizeUnits,
+    szDecimals: params.szDecimals,
+    reduceOnly: true,
+  });
+  const nonce = nextNonce();
+
+  let signature: HyperliquidSignature;
+  try {
+    signature = await signL1Action({ wallet: params.wallet, action, nonce, isTestnet: params.isTestnet });
+  } catch (err) {
+    if (isUserRejectedError(err)) return { status: "wallet-rejected" };
+    return {
+      status: "rejected",
+      reason: "invalid-request",
+      message: `Couldn't sign the close order: ${signingErrorDetail(err)}`,
+    };
+  }
+
+  return submitSignedAction(params.address, action, nonce, signature);
+}
+
+/** Pure derivation: a position's own signed size (positive = long,
+ * negative = short, per HyperliquidPosition.size) determines both the
+ * closing side (opposite of the position) and the exact size to close —
+ * the one place this logic lives, so the UI never has to (and never
+ * lets the user edit either value). */
+export function closingOrderParamsForPosition(positionSize: number): { side: PerpSide; sizeUnits: number } {
+  return { side: positionSize >= 0 ? "short" : "long", sizeUnits: Math.abs(positionSize) };
 }
