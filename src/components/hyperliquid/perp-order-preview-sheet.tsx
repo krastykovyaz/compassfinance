@@ -22,8 +22,9 @@ export type PerpOrderExecutionUiState =
   // it against a "filled" result's own totalSize (via checkPartialFill)
   // is what detects a partial fill below. Never touches the signing/
   // submission logic, which already ran by the time this state is
-  // reached.
-  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number };
+  // reached. szDecimals lets checkPartialFill truncate requestedSize the
+  // same way the real order's size was truncated before submission.
+  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number; szDecimals: number };
 
 function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
@@ -53,11 +54,12 @@ export function PerpOrderPreviewSheet({
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
   const requestedSize = isDone ? executionState.requestedSize : 0;
+  const szDecimals = isDone ? executionState.szDecimals : 0;
   // No positionSizeBeforeClose — this is an OPEN, not a close/reduce, so
   // there's no prior position size for a "remaining position" row to be
   // relative to. checkPartialFill returns null for every non-"filled"
   // status — those keep going through ResultBanner exactly as before.
-  const partialFill = result ? checkPartialFill(result, requestedSize) : null;
+  const partialFill = result ? checkPartialFill(result, requestedSize, szDecimals) : null;
 
   function handleClose() {
     if (isActive) return; // don't allow closing mid-signature/submission

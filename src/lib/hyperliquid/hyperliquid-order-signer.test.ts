@@ -400,27 +400,27 @@ describe("closingOrderParamsForPosition — pure derivation, never user-editable
 
 describe("checkPartialFill — partial-vs-full fill detection (opening and closing/reducing)", () => {
   it("returns null for every non-'filled' status — nothing to compare, existing result handling covers these", () => {
-    expect(checkPartialFill({ status: "wallet-rejected" }, 1, 1)).toBeNull();
-    expect(checkPartialFill({ status: "resting", orderId: 1 }, 1, 1)).toBeNull();
-    expect(checkPartialFill({ status: "pending" }, 1, 1)).toBeNull();
-    expect(checkPartialFill({ status: "network-failure", message: "x" }, 1, 1)).toBeNull();
-    expect(checkPartialFill({ status: "hyperliquid-rejected", message: "x" }, 1, 1)).toBeNull();
-    expect(checkPartialFill({ status: "rejected", reason: "invalid-request", message: "x" }, 1, 1)).toBeNull();
+    expect(checkPartialFill({ status: "wallet-rejected" }, 1, 5, 1)).toBeNull();
+    expect(checkPartialFill({ status: "resting", orderId: 1 }, 1, 5, 1)).toBeNull();
+    expect(checkPartialFill({ status: "pending" }, 1, 5, 1)).toBeNull();
+    expect(checkPartialFill({ status: "network-failure", message: "x" }, 1, 5, 1)).toBeNull();
+    expect(checkPartialFill({ status: "hyperliquid-rejected", message: "x" }, 1, 5, 1)).toBeNull();
+    expect(checkPartialFill({ status: "rejected", reason: "invalid-request", message: "x" }, 1, 5, 1)).toBeNull();
   });
 
   it("reports isPartial:false when the filled amount matches the requested amount exactly", () => {
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.5, avgPrice: 60000 }, 0.5, 0.5);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.5, avgPrice: 60000 }, 0.5, 5, 0.5);
     expect(result).toEqual({ isPartial: false, filledSize: 0.5, remainingSize: 0 });
   });
 
   it("reports isPartial:true when the filled amount comes in short of what was requested — the reported bug", () => {
     // Position was 1.0, user requested closing 0.6, only 0.4 actually filled.
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4, avgPrice: 60000 }, 0.6, 1.0);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4, avgPrice: 60000 }, 0.6, 5, 1.0);
     expect(result).toEqual({ isPartial: true, filledSize: 0.4, remainingSize: 0.6 });
   });
 
   it("a full close (requested === full position size) that fills completely leaves zero remaining", () => {
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 1.0, avgPrice: 60000 }, 1.0, 1.0);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 1.0, avgPrice: 60000 }, 1.0, 5, 1.0);
     expect(result).toEqual({ isPartial: false, filledSize: 1.0, remainingSize: 0 });
   });
 
@@ -428,28 +428,65 @@ describe("checkPartialFill — partial-vs-full fill detection (opening and closi
     // requestedSize round-trips through formatSize's tick rules before
     // submission; a fully-filled real order can report totalSize a hair
     // under what was asked without this ever being a genuine partial fill.
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4999999999, avgPrice: 60000 }, 0.5, 0.5);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4999999999, avgPrice: 60000 }, 0.5, 5, 0.5);
     expect(result?.isPartial).toBe(false);
   });
 
   it("does NOT tolerate a real, meaningfully short fill just because it's close to the epsilon boundary", () => {
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.499, avgPrice: 60000 }, 0.5, 0.5);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.499, avgPrice: 60000 }, 0.5, 5, 0.5);
     expect(result?.isPartial).toBe(true);
   });
 
   it("computes remainingSize from the position size BEFORE this close, not from the requested amount", () => {
     // Position was 2.0; user only requested reducing by 0.5; all 0.5 filled.
     // Remaining should be 1.5 (2.0 - 0.5), not 0 and not based on the request alone.
-    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.5, avgPrice: 60000 }, 0.5, 2.0);
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.5, avgPrice: 60000 }, 0.5, 5, 2.0);
     expect(result).toEqual({ isPartial: false, filledSize: 0.5, remainingSize: 1.5 });
   });
 
   it("omits remainingSize entirely when positionSizeBeforeClose isn't given — the OPENING case, where there's no prior position being reduced", () => {
-    const partial = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4, avgPrice: 60000 }, 0.6);
+    const partial = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4, avgPrice: 60000 }, 0.6, 5);
     expect(partial).toEqual({ isPartial: true, filledSize: 0.4, remainingSize: undefined });
 
-    const full = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.6, avgPrice: 60000 }, 0.6);
+    const full = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.6, avgPrice: 60000 }, 0.6, 5);
     expect(full).toEqual({ isPartial: false, filledSize: 0.6, remainingSize: undefined });
+  });
+
+  it("regression: a raw, pre-truncation requestedSize (margin*leverage/price) that fully filled must NOT be flagged partial", () => {
+    // The real bug: opening $100 notional BTC at ~$78,626 gives a raw
+    // requestedSize of 100/78626 = 0.0012718..., but the actual order
+    // submitted (and fully filled) was formatSize-truncated to BTC's 5
+    // szDecimals: 0.00127. Comparing the raw value directly against the
+    // real fill (as the code used to) always found a "gap" on the order
+    // of the tick size — 1.8e-6, far bigger than any sane epsilon — and
+    // mislabeled every fully-filled order as partial.
+    const rawRequestedSize = 100 / 78626;
+    const result = checkPartialFill(
+      { status: "filled", orderId: 1, totalSize: 0.00127, avgPrice: 78626 },
+      rawRequestedSize,
+      5
+    );
+    expect(result).toEqual({ isPartial: false, filledSize: 0.00127, remainingSize: undefined });
+  });
+
+  it("truncates requestedSize toward zero (formatSize's ROUND_DOWN) before comparing, not round-to-nearest", () => {
+    // 0.123456 at szDecimals=2 truncates to 0.12 (not rounds to 0.12 —
+    // same result here, but chosen to prove truncation direction below).
+    const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.129, avgPrice: 1 }, 0.1299, 2);
+    // 0.1299 truncates to 0.12 at 2 decimals; filled 0.129 > quantized
+    // requested 0.12, so this "over-fills" relative to the truncated
+    // request and must not be flagged partial.
+    expect(result?.isPartial).toBe(false);
+  });
+
+  it("still detects a genuine partial fill after quantization, not just before it", () => {
+    // Requested (quantized) 0.00127 BTC, only 0.001 actually filled.
+    const result = checkPartialFill(
+      { status: "filled", orderId: 1, totalSize: 0.001, avgPrice: 78626 },
+      100 / 78626,
+      5
+    );
+    expect(result?.isPartial).toBe(true);
   });
 });
 

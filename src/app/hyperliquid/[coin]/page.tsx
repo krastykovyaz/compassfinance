@@ -145,6 +145,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
         stage: "done",
         result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
         requestedSize: 0,
+        szDecimals: 0,
       });
       return;
     }
@@ -167,7 +168,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       onStageChange: (stage) => setExecutionState({ stage }),
     });
 
-    setExecutionState({ stage: "done", result, requestedSize });
+    setExecutionState({ stage: "done", result, requestedSize, szDecimals: freshMarket.szDecimals });
 
     // Real Hyperliquid-side outcomes (or an ambiguous network-failure that
     // might have gone through) all warrant refreshing the real account —

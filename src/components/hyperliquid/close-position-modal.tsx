@@ -24,8 +24,11 @@ export type CloseExecutionUiState =
   // it against a "filled" result's own totalSize (via checkPartialFill)
   // is what detects a partial fill below. Never touches the signing/
   // submission/reduceOnly logic, which already ran by the time this
-  // state is reached.
-  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number };
+  // state is reached. szDecimals lets checkPartialFill truncate
+  // requestedSize the same way the real order's size was truncated
+  // before submission — needed here too since a partial reduce's amount
+  // is user-typed and not necessarily already tick-aligned.
+  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number; szDecimals: number };
 
 const CLOSE_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
 
@@ -68,6 +71,7 @@ export function ClosePositionModal({
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
   const requestedSize = isDone ? executionState.requestedSize : 0;
+  const szDecimals = isDone ? executionState.szDecimals : 0;
   const maxSize = Math.abs(position.size);
   const parsedSize = Number(sizeInput) || 0;
   const isValidSize = parsedSize > 0 && parsedSize <= maxSize;
@@ -76,7 +80,7 @@ export function ClosePositionModal({
   // every other status (wallet-rejected, resting, rejected,
   // hyperliquid-rejected, network-failure) is untouched and still
   // rendered by the shared ResultBanner exactly as before.
-  const partialFill = result ? checkPartialFill(result, requestedSize, maxSize) : null;
+  const partialFill = result ? checkPartialFill(result, requestedSize, szDecimals, maxSize) : null;
 
   function handleClose() {
     if (isActive) return; // don't allow closing mid-signature/submission

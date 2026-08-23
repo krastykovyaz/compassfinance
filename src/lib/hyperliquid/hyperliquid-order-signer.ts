@@ -360,23 +360,33 @@ export type PartialFillCheck = { isPartial: boolean; filledSize: number; remaini
  * duplicates the comparison. Non-"filled" results (rejected, resting,
  * wallet-rejected, network-failure) have no fill amount to compare at
  * all and return null; the caller already has dedicated handling for
- * those from the existing result classification. `epsilon` absorbs
- * formatSize's tick-rounding noise, not a real business tolerance —
- * without it, a fully-filled order could round-trip to a totalSize a
- * hair under what was requested and get mislabeled as partial.
- * `positionSizeBeforeClose` only makes sense for a close/reduce (the
- * resulting remaining position size) — omit it when opening a position,
- * where there's no prior position being reduced. */
+ * those from the existing result classification.
+ *
+ * `szDecimals` is required so `requestedSize` can be truncated with the
+ * exact same `formatSize` rounding buildMarketOrderAction used to build
+ * the order that was actually submitted (Hyperliquid truncates toward
+ * zero, ROUND_DOWN, to szDecimals places). Without this, comparing the
+ * raw pre-truncation size (e.g. margin*leverage/price, an arbitrary
+ * float) against the real filled size made every fully-filled order that
+ * didn't already land exactly on a tick boundary look "partial" —
+ * formatSize truncates DOWN, so requestedSize > filledSize by up to a
+ * full tick on nearly every order. `epsilon` only needs to absorb float
+ * round-tripping noise after both sides are on the same tick grid, not a
+ * real business tolerance. `positionSizeBeforeClose` only makes sense for
+ * a close/reduce (the resulting remaining position size) — omit it when
+ * opening a position, where there's no prior position being reduced. */
 export function checkPartialFill(
   result: PerpOrderExecutionResult,
   requestedSize: number,
+  szDecimals: number,
   positionSizeBeforeClose?: number,
   epsilon = 1e-8
 ): PartialFillCheck | null {
   if (result.status !== "filled") return null;
   const filledSize = result.totalSize;
+  const quantizedRequestedSize = Number(formatSize(requestedSize, szDecimals));
   return {
-    isPartial: requestedSize - filledSize > epsilon,
+    isPartial: quantizedRequestedSize - filledSize > epsilon,
     filledSize,
     remainingSize: positionSizeBeforeClose !== undefined ? Math.max(positionSizeBeforeClose - filledSize, 0) : undefined,
   };
