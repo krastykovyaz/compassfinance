@@ -135,7 +135,7 @@ export function AITutorPanel({
           }}
           disabled={loading}
           placeholder={t("ai.askPlaceholder")}
-          className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2.5 text-[13px] text-ink outline-none focus:border-purple"
+          className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2.5 text-[16px] text-ink outline-none focus:border-purple"
           aria-label={t("ai.askCompass")}
         />
         <button
