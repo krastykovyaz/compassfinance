@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { PERFORMANCE_RANGES, PerformanceRange } from "@/lib/trading/types";
 import { usePerformanceHistory } from "@/lib/trading/paper-account-provider";
 import { cn } from "@/lib/utils";
@@ -47,6 +47,13 @@ export function PerformanceChart() {
                   />
                 </linearGradient>
               </defs>
+              {/* Snapshots are recorded opportunistically (throttled, not on a
+                  fixed interval), so a quiet overnight stretch can have far
+                  fewer points than an active one covering less real time.
+                  Without a real time-based x-axis, index-based spacing
+                  compresses sparse periods and stretches dense ones,
+                  distorting flat/near-flat history into a misleading spike. */}
+              <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} hide />
               <YAxis domain={["dataMin", "dataMax"]} hide />
               <Area
                 type="monotone"
