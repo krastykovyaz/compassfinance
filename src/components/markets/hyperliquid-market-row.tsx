@@ -97,9 +97,10 @@ export function HyperliquidMarketRow({ market }: { market: HyperliquidMarketSnap
         <AssetDetailsPanel
           name={market.displayName}
           underlying={getAsset(market.compassAssetId)?.name ?? market.displayName}
-          technicalTicker={`${market.assetId}-PERP`}
+          technicalTicker={market.venue === "native" ? `${market.assetId}-PERP` : market.assetId}
           instrumentType={t("market.instrumentTypePerpetual")}
-          dataSource="Hyperliquid"
+          venue={market.venue}
+          dexFullName={market.dexFullName}
         />
       ) : null}
       {/* Server only ever returns markets that resolved to an approved

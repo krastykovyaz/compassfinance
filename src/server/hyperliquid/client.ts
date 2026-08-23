@@ -143,8 +143,11 @@ function isRawMeta(value: unknown): value is HyperliquidRawMeta {
   );
 }
 
-export async function fetchMeta(): Promise<HyperliquidFetchResult<HyperliquidRawMeta>> {
-  const result = await postInfo<unknown>({ type: "meta" });
+// `dex` is Hyperliquid's own builder-deployed (HIP-3) perp dex name (e.g.
+// "xyz") — omitted (or "") means the default/main dex, exactly matching
+// Hyperliquid's own convention everywhere it accepts this parameter.
+export async function fetchMeta(dex?: string): Promise<HyperliquidFetchResult<HyperliquidRawMeta>> {
+  const result = await postInfo<unknown>({ type: "meta", ...(dex ? { dex } : {}) });
   if (!result.ok) return result;
   if (!isRawMeta(result.data)) {
     return { ok: false, reason: "malformed_response", message: "Hyperliquid meta response missing universe" };
@@ -152,10 +155,10 @@ export async function fetchMeta(): Promise<HyperliquidFetchResult<HyperliquidRaw
   return { ok: true, data: result.data };
 }
 
-export async function fetchMetaAndAssetCtxs(): Promise<
-  HyperliquidFetchResult<[HyperliquidRawMeta, HyperliquidRawAssetCtx[]]>
-> {
-  const result = await postInfo<unknown>({ type: "metaAndAssetCtxs" });
+export async function fetchMetaAndAssetCtxs(
+  dex?: string
+): Promise<HyperliquidFetchResult<[HyperliquidRawMeta, HyperliquidRawAssetCtx[]]>> {
+  const result = await postInfo<unknown>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) });
   if (!result.ok) return result;
 
   const data = result.data;
@@ -174,6 +177,54 @@ export async function fetchMetaAndAssetCtxs(): Promise<
   }
 
   return { ok: true, data: data as [HyperliquidRawMeta, HyperliquidRawAssetCtx[]] };
+}
+
+export type HyperliquidRawPerpDex = {
+  name: string;
+  fullName: string;
+  deployer: string;
+  oracleUpdater: string | null;
+} | null; // null is the main/default dex's own placeholder slot in the list
+
+// Phase 8 — enumerates every builder-deployed (HIP-3) perp dex Hyperliquid
+// currently knows about, most importantly each one's POSITION in this
+// array: that position IS the "perp_dex_index" Hyperliquid's own asset-id
+// formula (100000 + perp_dex_index*10000 + index_in_meta) requires for
+// building a valid order/leverage action against that dex — see
+// markets.ts's getHyperliquidPerpDexIndex, the one place this gets used.
+export async function fetchPerpDexs(): Promise<HyperliquidFetchResult<HyperliquidRawPerpDex[]>> {
+  const result = await postInfo<unknown>({ type: "perpDexs" });
+  if (!result.ok) return result;
+  if (!Array.isArray(result.data)) {
+    return { ok: false, reason: "malformed_response", message: "Hyperliquid perpDexs response was not an array" };
+  }
+  return { ok: true, data: result.data as HyperliquidRawPerpDex[] };
+}
+
+export type HyperliquidRawSpotToken = {
+  name: string;
+  index: number;
+  tokenId: string;
+};
+
+// Only the fields this integration actually needs (resolving USDC's real
+// tokenId for a sendAsset transfer, see markets.ts's getUsdcTokenId) — the
+// real response carries many more per-token fields this app never reads.
+export async function fetchSpotMeta(): Promise<HyperliquidFetchResult<{ tokens: HyperliquidRawSpotToken[] }>> {
+  const result = await postInfo<unknown>({ type: "spotMeta" });
+  if (!result.ok) return result;
+  const data = result.data as { tokens?: unknown } | null;
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray(data.tokens) ||
+    !data.tokens.every(
+      (t) => t && typeof t.name === "string" && typeof t.index === "number" && typeof t.tokenId === "string"
+    )
+  ) {
+    return { ok: false, reason: "malformed_response", message: "Hyperliquid spotMeta response missing tokens" };
+  }
+  return { ok: true, data: data as { tokens: HyperliquidRawSpotToken[] } };
 }
 
 export async function fetchCandleSnapshot(
@@ -284,10 +335,16 @@ export type HyperliquidRawFill = {
   oid: number;
 };
 
+// Phase 8: HIP-3 dexes hold their OWN isolated margin/collateral pool,
+// verified live — the same address has a genuinely different
+// accountValue with `dex: "xyz"` than without it, not just a filtered
+// view of one shared balance. `dex` omitted (or "") means the main dex,
+// exactly as documented.
 export async function fetchClearinghouseState(
-  user: string
+  user: string,
+  dex?: string
 ): Promise<HyperliquidFetchResult<HyperliquidRawClearinghouseState>> {
-  const result = await postInfo<unknown>({ type: "clearinghouseState", user });
+  const result = await postInfo<unknown>({ type: "clearinghouseState", user, ...(dex ? { dex } : {}) });
   if (!result.ok) return result;
 
   const data = result.data as Partial<HyperliquidRawClearinghouseState> | null;
@@ -356,8 +413,14 @@ export async function fetchSpotClearinghouseState(
   return { ok: true, data: data as HyperliquidRawSpotClearinghouseState };
 }
 
-export async function fetchOpenOrders(user: string): Promise<HyperliquidFetchResult<HyperliquidRawOpenOrder[]>> {
-  const result = await postInfo<unknown>({ type: "openOrders", user });
+// Per Hyperliquid's own docs, "dex" here defaults to the main dex only —
+// unlike userFills below, open orders on a HIP-3 dex are NOT included
+// unless this is explicitly passed.
+export async function fetchOpenOrders(
+  user: string,
+  dex?: string
+): Promise<HyperliquidFetchResult<HyperliquidRawOpenOrder[]>> {
+  const result = await postInfo<unknown>({ type: "openOrders", user, ...(dex ? { dex } : {}) });
   if (!result.ok) return result;
 
   const data = result.data;

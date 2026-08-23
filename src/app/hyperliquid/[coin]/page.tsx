@@ -18,20 +18,22 @@
 import { use, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert, Lock, BookOpen } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert, Lock, BookOpen, ArrowLeftRight } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { PriceChart } from "@/components/asset/price-chart";
 import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
 import { PerpOrderPreviewSheet, type PerpOrderExecutionUiState } from "@/components/hyperliquid/perp-order-preview-sheet";
+import { FundXyzModal } from "@/components/hyperliquid/fund-xyz-modal";
 import { useWallet } from "@/lib/wallet/wallet-provider";
-import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { useHyperliquidAccount, useHyperliquidDexAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
 import { resolveHyperliquidPanelView } from "@/components/portfolio/hyperliquid-account-panel";
-import { getHyperliquidCoinForAsset, isTradeableAssetId } from "@/lib/hyperliquid/asset-mapping";
+import { getHyperliquidCoinForAsset, isTradeableAssetId, getHip3DexName, getHip3DexFullName } from "@/lib/hyperliquid/asset-mapping";
 import { getRealTradingAccess } from "@/lib/hyperliquid/real-trading-access";
+import type { DexTransferDirection } from "@/lib/hyperliquid/hyperliquid-dex-transfer";
 import { getAsset } from "@/lib/assets/catalog";
 import { useProgress } from "@/lib/progress-store";
 import { getLessonHref } from "@/lib/learning/routes";
@@ -83,6 +85,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const [previewOpen, setPreviewOpen] = useState(false);
   const [executionState, setExecutionState] = useState<PerpOrderExecutionUiState>({ stage: "idle" });
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [fundModalDirection, setFundModalDirection] = useState<DexTransferDirection | null>(null);
 
   const coin = getHyperliquidCoinForAsset(slug);
   const market = coin ? (markets.find((m) => m.assetId === coin) ?? null) : null;
@@ -91,7 +94,17 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   // stays available only in the Details panel below).
   const displayName = catalogEntry?.name ?? rawSlug.toUpperCase();
 
-  const availableBalance = snapshot?.withdrawableBalance ?? 0;
+  // Phase 8 — a HIP-3 asset (e.g. xyz:AAPL) trades against that dex's OWN
+  // isolated margin pool, never the main dex's balance (verified live:
+  // the same address holds a genuinely different balance per dex). null
+  // dex means this is a native asset (btc/eth) — every balance below
+  // falls back to the existing main-account hook unchanged.
+  const dex = coin ? getHip3DexName(coin) : null;
+  const dexFullName = dex ? getHip3DexFullName(dex) : null;
+  const xyzAccount = useHyperliquidDexAccount(dex);
+
+  const mainBalance = snapshot?.withdrawableBalance ?? 0;
+  const availableBalance = dex ? (xyzAccount.snapshot?.withdrawableBalance ?? 0) : mainBalance;
   const maxLeverage = market?.maxLeverage ?? 1;
   const marginUsdc = Number(marginInput) || 0;
 
@@ -190,7 +203,11 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     // a pure wallet-rejection or our own pre-flight rejection never
     // reached Hyperliquid, so there's nothing new to reconcile.
     if (result.status !== "wallet-rejected" && result.status !== "rejected") {
-      refreshAccount();
+      if (dex) {
+        xyzAccount.refresh();
+      } else {
+        refreshAccount();
+      }
     }
   }
 
@@ -259,9 +276,10 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
             <AssetDetailsPanel
               name={displayName}
               underlying={catalogEntry?.name ?? displayName}
-              technicalTicker={`${coin}-PERP`}
+              technicalTicker={dex ? coin : `${coin}-PERP`}
               instrumentType={t("market.instrumentTypePerpetual")}
-              dataSource="Hyperliquid"
+              venue={dex ? "hip3" : "native"}
+              dexFullName={dexFullName}
             />
           ) : null}
         </div>
@@ -363,14 +381,46 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
               )}
             </button>
           </Card>
+        ) : dex && xyzAccount.status === "loading" ? (
+          <Card>
+            <div className="flex items-center justify-center py-4">
+              <Loader2 size={18} className="animate-spin text-ink-faint" />
+            </div>
+          </Card>
+        ) : dex && availableBalance <= 0 ? (
+          <Card className="text-center">
+            <div className="flex justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-2 text-ink-faint">
+                <Wallet size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-[15px] font-semibold text-ink">{t("perpTrade.zeroXyzBalanceTitle")}</p>
+            <p className="mt-1 text-[13px] text-ink-muted">{t("perpTrade.zeroXyzBalanceBody")}</p>
+            <button
+              onClick={() => setFundModalDirection("fund")}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
+            >
+              {t("perpTrade.fundXyzButton")}
+            </button>
+          </Card>
         ) : (
           <Card>
             <div className="flex items-center justify-between">
               <h2 className="text-[15px] font-semibold text-ink">{t("perpTrade.margin")} (USDC)</h2>
               <span className="text-[13px] text-ink-muted">
-                {t("perpTrade.availableBalance")}: {formatCurrency(availableBalance)}
+                {dex ? t("perpTrade.xyzTradingBalanceLabel") : t("perpTrade.availableBalance")}:{" "}
+                {formatCurrency(availableBalance)}
               </span>
             </div>
+            {dex ? (
+              <button
+                onClick={() => setFundModalDirection("withdraw")}
+                className="mt-1.5 flex items-center gap-1 text-[12px] font-medium text-ink-muted underline-offset-2 active:opacity-70"
+              >
+                <ArrowLeftRight size={12} />
+                {t("perpTrade.withdrawFromXyzButton")}
+              </button>
+            ) : null}
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
@@ -515,6 +565,21 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
           executionState={executionState}
           onConfirmAndSign={handleConfirmAndSign}
           onClose={handleClosePreview}
+        />
+      ) : null}
+
+      {fundModalDirection && dex && dexFullName ? (
+        <FundXyzModal
+          direction={fundModalDirection}
+          dex={dex}
+          dexFullName={dexFullName}
+          mainBalance={mainBalance}
+          xyzBalance={availableBalance}
+          onClose={() => setFundModalDirection(null)}
+          onSuccess={() => {
+            refreshAccount();
+            xyzAccount.refresh();
+          }}
         />
       ) : null}
     </AppShell>

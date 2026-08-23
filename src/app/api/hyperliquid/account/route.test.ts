@@ -19,11 +19,12 @@ import { GET } from "./route";
 
 const ADDRESS = "0x1234567890123456789012345678901234567890";
 
-function request(address?: string) {
-  const url = address
-    ? `http://localhost/api/hyperliquid/account?address=${address}`
-    : "http://localhost/api/hyperliquid/account";
-  return new Request(url);
+function request(address?: string, dex?: string) {
+  const params = new URLSearchParams();
+  if (address) params.set("address", address);
+  if (dex) params.set("dex", dex);
+  const qs = params.toString();
+  return new Request(`http://localhost/api/hyperliquid/account${qs ? `?${qs}` : ""}`);
 }
 
 beforeEach(() => {
@@ -57,11 +58,11 @@ describe("GET /api/hyperliquid/account", () => {
     expect(getHyperliquidAccount).not.toHaveBeenCalled();
   });
 
-  it("calls every service function with only the address, never the userId", async () => {
+  it("calls every service function with only the address (dex undefined) when no dex is requested, never the userId", async () => {
     await GET(request(ADDRESS));
 
-    expect(getHyperliquidAccount).toHaveBeenCalledWith(ADDRESS);
-    expect(getHyperliquidOpenOrders).toHaveBeenCalledWith(ADDRESS);
+    expect(getHyperliquidAccount).toHaveBeenCalledWith(ADDRESS, undefined);
+    expect(getHyperliquidOpenOrders).toHaveBeenCalledWith(ADDRESS, undefined);
     expect(getHyperliquidUserFills).toHaveBeenCalledWith(ADDRESS, 20);
     // Explicitly confirm "user-1" (the authenticated user id) never appears
     // in any call the route makes downstream.
@@ -82,5 +83,16 @@ describe("GET /api/hyperliquid/account", () => {
       openOrders: { status: "ok", orders: [] },
       fills: { status: "ok", fills: [] },
     });
+  });
+
+  // Phase 8 — a HIP-3 dex's account is a real, separate fetch, not a
+  // filtered view. userFills has no dex scoping (Hyperliquid returns
+  // fills across every dex by default), so it never receives dex.
+  it("passes a ?dex= query param through to getHyperliquidAccount/getHyperliquidOpenOrders, but never to getHyperliquidUserFills", async () => {
+    await GET(request(ADDRESS, "xyz"));
+
+    expect(getHyperliquidAccount).toHaveBeenCalledWith(ADDRESS, "xyz");
+    expect(getHyperliquidOpenOrders).toHaveBeenCalledWith(ADDRESS, "xyz");
+    expect(getHyperliquidUserFills).toHaveBeenCalledWith(ADDRESS, 20);
   });
 });

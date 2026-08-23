@@ -10,6 +10,8 @@ const fetchMeta = vi.fn();
 const postExchange = vi.fn();
 const fetchUserAbstraction = vi.fn();
 const fetchSpotClearinghouseState = vi.fn();
+const fetchPerpDexs = vi.fn();
+const fetchSpotMeta = vi.fn();
 const getServerLearningProgress = vi.fn();
 
 vi.mock("@/server/repositories/learning-repository", () => ({
@@ -27,6 +29,8 @@ vi.mock("./client", () => ({
   postExchange: (...args: unknown[]) => postExchange(...args),
   fetchUserAbstraction: (...args: unknown[]) => fetchUserAbstraction(...args),
   fetchSpotClearinghouseState: (...args: unknown[]) => fetchSpotClearinghouseState(...args),
+  fetchPerpDexs: (...args: unknown[]) => fetchPerpDexs(...args),
+  fetchSpotMeta: (...args: unknown[]) => fetchSpotMeta(...args),
 }));
 
 import { clearMarketCache } from "@/server/market/cache";
@@ -51,6 +55,26 @@ const RAW_ASSET_CTXS = [
   { dayNtlVlm: "1000000", funding: "0.0001", markPx: "60000", midPx: "60001", openInterest: "500", oraclePx: "60000.5", prevDayPx: "59000" },
   { dayNtlVlm: "500000", funding: "0.0002", markPx: "3000", midPx: "3000.5", openInterest: "200", oraclePx: "3000.2", prevDayPx: "2950" },
 ];
+
+// Phase 8 — the "xyz" HIP-3 dex, at position 1 in the live perpDexs list
+// (including the leading null main-dex slot), matching the real,
+// verified mainnet/testnet layout.
+const RAW_PERP_DEXS = [
+  null,
+  { name: "xyz", fullName: "XYZ", deployer: "0x88806a71d74ad0a510b350545c9ae490912f0888", oracleUpdater: null },
+];
+
+const RAW_XYZ_META = {
+  universe: [{ name: "xyz:AAPL", szDecimals: 3, maxLeverage: 20 }],
+};
+
+const RAW_XYZ_ASSET_CTXS = [
+  { dayNtlVlm: "2000000", funding: "0.00005", markPx: "310", midPx: "310.1", openInterest: "1000", oraclePx: "310.05", prevDayPx: "305" },
+];
+
+function mockHip3DexResolvable() {
+  fetchPerpDexs.mockResolvedValue({ ok: true, data: RAW_PERP_DEXS });
+}
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -193,6 +217,85 @@ describe("getHyperliquidMarkets", () => {
 
     expect(first.status).toBe("unavailable");
     expect(second.status).toBe("ok");
+  });
+});
+
+describe("getHyperliquidMarkets — HIP-3 merge (Phase 8)", () => {
+  beforeEach(() => {
+    mockHip3DexResolvable();
+    fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
+      dex === "xyz"
+        ? { ok: true, data: [RAW_XYZ_META, RAW_XYZ_ASSET_CTXS] }
+        : { ok: true, data: [RAW_META, RAW_ASSET_CTXS] }
+    );
+  });
+
+  it("includes verified xyz:* markets alongside native BTC/ETH, each correctly tagged venue/dex/dexFullName", async () => {
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.markets.map((m) => m.assetId).sort()).toEqual(["BTC", "ETH", "xyz:AAPL"]);
+    const aapl = result.markets.find((m) => m.assetId === "xyz:AAPL")!;
+    expect(aapl.displayName).toBe("Apple Inc.");
+    expect(aapl.compassAssetId).toBe("aapl");
+    expect(aapl.venue).toBe("hip3");
+    expect(aapl.dex).toBe("xyz");
+    expect(aapl.dexFullName).toBe("XYZ");
+    // xyz at perpDexs position 1, xyz:AAPL at index_in_meta 0.
+    expect(aapl.assetIndex).toBe(110000);
+    const btc = result.markets.find((m) => m.assetId === "BTC")!;
+    expect(btc.venue).toBe("native");
+    expect(btc.dex).toBeNull();
+    expect(btc.dexFullName).toBeNull();
+  });
+
+  it("never leaks an xyz market this app hasn't approved, even though it's a real, liquid market", async () => {
+    fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
+      dex === "xyz"
+        ? {
+            ok: true,
+            data: [
+              { universe: [{ name: "xyz:AAPL", szDecimals: 3, maxLeverage: 20 }, { name: "xyz:COIN", szDecimals: 3, maxLeverage: 10 }] },
+              [RAW_XYZ_ASSET_CTXS[0], { ...RAW_XYZ_ASSET_CTXS[0], markPx: "250" }],
+            ],
+          }
+        : { ok: true, data: [RAW_META, RAW_ASSET_CTXS] }
+    );
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.markets.map((m) => m.assetId).sort()).toEqual(["BTC", "ETH", "xyz:AAPL"]);
+    }
+  });
+
+  it("a native-dex failure still fails the whole call, exactly as before Phase 8", async () => {
+    fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
+      dex === "xyz"
+        ? { ok: true, data: [RAW_XYZ_META, RAW_XYZ_ASSET_CTXS] }
+        : { ok: false, reason: "network_error", message: "native dex down" }
+    );
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("unavailable");
+  });
+
+  it("an xyz-dex failure degrades to just missing xyz markets — native BTC/ETH still return ok", async () => {
+    fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
+      dex === "xyz"
+        ? { ok: false, reason: "network_error", message: "xyz down" }
+        : { ok: true, data: [RAW_META, RAW_ASSET_CTXS] }
+    );
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.markets.map((m) => m.assetId).sort()).toEqual(["BTC", "ETH"]);
+    }
   });
 });
 
@@ -527,6 +630,73 @@ describe("getHyperliquidAccount", () => {
       }
     });
   });
+
+  // Phase 8 — a HIP-3 dex's margin pool is genuinely separate from the
+  // main dex's (verified live: the same address holds a different
+  // accountValue with dex:"xyz" than without it), so this is a real,
+  // independently-fetched account view, not a filtered slice of one
+  // shared balance.
+  describe("dex-scoped account (Phase 8)", () => {
+    it("passes the dex through to fetchClearinghouseState and normalizes that dex's own balance", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { ...RAW_CLEARINGHOUSE_STATE, withdrawable: "42", marginSummary: { ...RAW_CLEARINGHOUSE_STATE.marginSummary, accountValue: "42" } },
+      });
+
+      const result = await getHyperliquidAccount("0xabc", "xyz");
+
+      expect(fetchClearinghouseState).toHaveBeenCalledWith("0xabc", "xyz");
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.withdrawableBalance).toBe(42);
+        expect(result.account.accountValue).toBe(42);
+      }
+    });
+
+    it("never applies the Unified Account Mode spot<->perp override to a HIP-3 dex's balance", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { ...RAW_CLEARINGHOUSE_STATE, assetPositions: [], withdrawable: "5", marginSummary: { ...RAW_CLEARINGHOUSE_STATE.marginSummary, accountValue: "5" } },
+      });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { balances: [{ coin: "USDC", token: 0, total: "999", hold: "0", entryNtl: "0" }] },
+      });
+
+      const result = await getHyperliquidAccount("0xabc", "xyz");
+
+      expect(fetchUserAbstraction).not.toHaveBeenCalled();
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        // Must stay the xyz dex's own $5, never the main dex's unified $999.
+        expect(result.account.withdrawableBalance).toBe(5);
+        expect(result.account.accountValue).toBe(5);
+      }
+    });
+
+    it("caches the native and xyz-dex views separately — one doesn't serve stale data for the other", async () => {
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) => ({
+        ok: true,
+        data: {
+          ...RAW_CLEARINGHOUSE_STATE,
+          withdrawable: dex === "xyz" ? "42" : "7000",
+          marginSummary: { ...RAW_CLEARINGHOUSE_STATE.marginSummary, accountValue: dex === "xyz" ? "42" : "10000" },
+        },
+      }));
+
+      const main = await getHyperliquidAccount("0xabc");
+      const xyz = await getHyperliquidAccount("0xabc", "xyz");
+
+      expect(fetchClearinghouseState).toHaveBeenCalledTimes(2);
+      if (main.status === "ok" && xyz.status === "ok") {
+        expect(main.account.withdrawableBalance).toBe(7000);
+        expect(xyz.account.withdrawableBalance).toBe(42);
+      } else {
+        throw new Error("expected both account views to resolve ok");
+      }
+    });
+  });
 });
 
 describe("getHyperliquidOpenOrders", () => {
@@ -567,6 +737,31 @@ describe("getHyperliquidOpenOrders", () => {
     const result = await getHyperliquidOpenOrders("0xabc");
 
     expect(result.status).toBe("unavailable");
+  });
+
+  // Phase 8 — per Hyperliquid's own docs, open orders default to the
+  // main dex ONLY; a HIP-3 dex's open orders are invisible unless this
+  // is passed explicitly (unlike userFills, which already spans every
+  // dex by default).
+  it("passes the dex through to fetchOpenOrders and caches it separately from the main dex's view", async () => {
+    fetchOpenOrders.mockImplementation(async (_address: string, dex?: string) => ({
+      ok: true,
+      data:
+        dex === "xyz"
+          ? [{ coin: "xyz:AAPL", limitPx: "300", oid: 2, side: "B", sz: "1", timestamp: 456 }]
+          : [{ coin: "BTC", limitPx: "60000", oid: 1, side: "B", sz: "0.1", timestamp: 123 }],
+    }));
+
+    const main = await getHyperliquidOpenOrders("0xabc");
+    const xyz = await getHyperliquidOpenOrders("0xabc", "xyz");
+
+    expect(fetchOpenOrders).toHaveBeenCalledWith("0xabc", "xyz");
+    expect(main.status).toBe("ok");
+    expect(xyz.status).toBe("ok");
+    if (main.status === "ok" && xyz.status === "ok") {
+      expect(main.orders.map((o) => o.coin)).toEqual(["BTC"]);
+      expect(xyz.orders.map((o) => o.coin)).toEqual(["xyz:AAPL"]);
+    }
   });
 });
 
@@ -1124,6 +1319,383 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       await getHyperliquidUserFills("0xabc", 20);
       expect(fetchOpenOrders.mock.calls.length).toBeGreaterThan(1);
       expect(fetchUserFills.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  // Phase 8 — real orders against a HIP-3 asset (xyz:AAPL here). Same
+  // action-submission path as BTC/ETH, but the pre-flight balance check
+  // must use that dex's own ISOLATED margin pool, never the main dex's.
+  describe("HIP-3 order execution (Phase 8) — dex-scoped balance check", () => {
+    const XYZ_ORDER_ACTION = {
+      type: "order",
+      orders: [{ a: 110000, b: true, p: "310", s: "1", r: false, t: { limit: { tif: "FrontendMarket" } } }],
+      grouping: "na",
+    };
+
+    beforeEach(() => {
+      fetchPerpDexs.mockResolvedValue({
+        ok: true,
+        data: [null, { name: "xyz", fullName: "XYZ", deployer: "0x888…", oracleUpdater: null }],
+      });
+      fetchMeta.mockImplementation(async (dex?: string) =>
+        dex === "xyz"
+          ? { ok: true, data: { universe: [{ name: "xyz:AAPL", szDecimals: 3, maxLeverage: 20 }] } }
+          : { ok: true, data: RAW_META }
+      );
+      // aapl's own investment-unlock stage has a prerequisite chain
+      // (sp500 -> nasdaq -> aapl) AND its own requiredAchievementId
+      // (STOCK_EXPLORER) — same as the rest of the app's learning
+      // progression, unrelated to and untouched by Phase 8's Hyperliquid
+      // real-trading mapping. All of it must be done for
+      // isInvestmentUnlocked("aapl", ...) to report UNLOCKED.
+      getServerLearningProgress.mockResolvedValue({
+        ...REAL_TRADING_UNLOCKED_PROGRESS,
+        completedLessons: ["sp500", "nasdaq", "aapl"],
+        completedQuizzes: ["sp500", "nasdaq", "aapl"],
+        unlockedAchievements: ["STOCK_EXPLORER"],
+        practiceTradedAssetIds: ["aapl"],
+      });
+    });
+
+    it("checks the xyz dex's own balance, not the main dex's, for an xyz:AAPL order", async () => {
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) => ({
+        ok: true,
+        data: {
+          assetPositions: [],
+          marginSummary: { accountValue: dex === "xyz" ? "10000" : "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+          withdrawable: dex === "xyz" ? "10000" : "0",
+          time: Date.now(),
+        },
+      }));
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(fetchClearinghouseState).toHaveBeenCalledWith("0xabc", "xyz");
+      expect(result.status).not.toBe("rejected");
+    });
+
+    it("rejects for insufficient balance in the xyz pool even when the main dex is well funded", async () => {
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) => ({
+        ok: true,
+        data: {
+          assetPositions: [],
+          marginSummary: { accountValue: dex === "xyz" ? "1" : "1000000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+          withdrawable: dex === "xyz" ? "1" : "1000000",
+          time: Date.now(),
+        },
+      }));
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("never applies the Unified Account Mode override to an xyz order's balance check", async () => {
+      mockAccountBalance("0"); // classic clearinghouseState for the (unused here) main dex
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) =>
+        dex === "xyz"
+          ? {
+              ok: true,
+              data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "0", time: Date.now() },
+            }
+          : { ok: true, data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "0", time: Date.now() } }
+      );
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { balances: [{ coin: "USDC", token: 0, total: "999.0", hold: "0.0", entryNtl: "0.0" }], tokenToAvailableAfterMaintenance: [[0, "999.0"]] },
+      });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      // The main dex's unified $999 must NEVER rescue an underfunded xyz order.
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+    });
+
+    it("still applies the Phase 7 education gate — locked without a completed course/quiz/practice trade for aapl specifically", async () => {
+      getServerLearningProgress.mockResolvedValue(REAL_TRADING_UNLOCKED_PROGRESS); // btc/eth done, NOT aapl
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "real-trading-locked", message: expect.any(String) });
+    });
+
+    it("busts only the xyz dex's cache after a successful xyz order, not the main dex's", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "10000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "10000", time: Date.now() },
+      });
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+      await getHyperliquidAccount("0xabc"); // populate main-dex cache
+      await getHyperliquidAccount("0xabc", "xyz"); // populate xyz-dex cache
+      const callsBeforeMain = fetchClearinghouseState.mock.calls.length;
+
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      await getHyperliquidAccount("0xabc"); // main dex — should still be cached
+      const callsAfterMain = fetchClearinghouseState.mock.calls.length;
+      await getHyperliquidAccount("0xabc", "xyz"); // xyz dex — must be busted, refetches
+      const callsAfterXyz = fetchClearinghouseState.mock.calls.length;
+
+      expect(callsAfterMain).toBe(callsBeforeMain + 1); // the order's own fresh pre-flight check, not a cache read
+      expect(callsAfterXyz).toBeGreaterThan(callsAfterMain);
+    });
+  });
+
+  // Phase 8 — the collateral transfer that funds/withdraws a HIP-3 dex's
+  // isolated margin pool, reusing the exact same signed-action relay path
+  // as every other action here (no second execution system).
+  describe("sendAsset (Phase 8) — collateral transfer between the main dex and a HIP-3 dex", () => {
+    const USDC_TOKEN_ID = "USDC:0x6d1e7cde53ba9467b783cb7c530ce054";
+
+    function transferAction(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        type: "sendAsset",
+        signatureChainId: "0xa4b1",
+        hyperliquidChain: "Mainnet",
+        destination: "0xabc",
+        sourceDex: "",
+        destinationDex: "xyz",
+        token: USDC_TOKEN_ID,
+        amount: "25",
+        fromSubAccount: "",
+        nonce: NONCE,
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      fetchPerpDexs.mockResolvedValue({
+        ok: true,
+        data: [null, { name: "xyz", fullName: "XYZ", deployer: "0x888…", oracleUpdater: null }],
+      });
+      fetchSpotMeta.mockResolvedValue({
+        ok: true,
+        data: { tokens: [{ name: "USDC", index: 0, tokenId: "0x6d1e7cde53ba9467b783cb7c530ce054" }] },
+      });
+      // Default: the source pool is well funded — tests about shape/
+      // destination/dex/token validation don't also have to be about the
+      // balance check. Tests that ARE about it override this per-case.
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "10000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "10000", time: Date.now() },
+      });
+    });
+
+    it("relays a valid main→xyz transfer and classifies the response like any other action", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "pending" });
+      expect(postExchange).toHaveBeenCalledWith({ action: transferAction(), nonce: NONCE, signature: SIGNATURE });
+    });
+
+    it("relays a valid xyz→main (withdraw) transfer the same way", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      const withdrawAction = transferAction({ sourceDex: "xyz", destinationDex: "" });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", withdrawAction, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "pending" });
+      expect(postExchange).toHaveBeenCalled();
+    });
+
+    it("never checks the asset/leverage/education gate — sendAsset has no market concept", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(getServerLearningProgress).not.toHaveBeenCalled();
+      expect(fetchMeta).not.toHaveBeenCalled();
+    });
+
+    it("rejects a transfer whose destination isn't the caller's own address — even though this is signed by the wallet, the relay refuses to forward a mismatched payload", async () => {
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ destination: "0xattacker000000000000000000000000000000" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-transfer", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("accepts a destination that differs only in case — addresses are compared case-insensitively", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xABC",
+        transferAction({ destination: "0xabc" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result.status).not.toBe("rejected");
+    });
+
+    it("rejects a transfer naming a dex this app doesn't configure", async () => {
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ destinationDex: "some-random-dex" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-transfer", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects a transfer whose source and destination are the same", async () => {
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "xyz", destinationDex: "xyz" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-transfer", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects a transfer of any token other than the real, live-resolved USDC id", async () => {
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ token: "PURR:0xc4bf3f870c0e9465323c0b6ed28096c2" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-transfer", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects when the live USDC token id can't be resolved at all", async () => {
+      fetchSpotMeta.mockResolvedValue({ ok: false, reason: "network_error", message: "down" });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-transfer", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects a zero or negative amount", async () => {
+      const zero = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction({ amount: "0" }), NONCE, SIGNATURE);
+      expect(zero).toEqual({ status: "rejected", reason: "invalid-request", message: expect.any(String) });
+
+      const negative = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction({ amount: "-5" }), NONCE, SIGNATURE);
+      expect(negative).toEqual({ status: "rejected", reason: "invalid-request", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects a transfer whose amount exceeds the SOURCE pool's own balance", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          assetPositions: [],
+          marginSummary: { accountValue: "1", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+          withdrawable: "1", // underfunded relative to the "25" requested
+          time: Date.now(),
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("checks the SOURCE dex's balance specifically — a well-funded destination never rescues an underfunded source", async () => {
+      // Withdraw direction: source is "xyz" (underfunded), destination is
+      // "" (well-funded main dex) — must still be rejected.
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) => ({
+        ok: true,
+        data: {
+          assetPositions: [],
+          marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+          withdrawable: dex === "xyz" ? "1" : "1000000",
+          time: Date.now(),
+        },
+      }));
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "xyz", destinationDex: "" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(fetchClearinghouseState).toHaveBeenCalledWith("0xabc", "xyz");
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+    });
+
+    it("rejects a malformed transfer shape (missing fields) before ever contacting Hyperliquid", async () => {
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        { type: "sendAsset", destination: "0xabc" }, // missing sourceDex/destinationDex/token/amount
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-request", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("still returns rejected/disabled when the flag is off — the top-level gate applies to sendAsset too", async () => {
+      process.env.HYPERLIQUID_ENABLED = "false";
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "disabled", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("busts BOTH the source and destination dex caches after a successful transfer", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "10000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "10000", time: Date.now() },
+      });
+
+      await getHyperliquidAccount("0xabc"); // populate main cache
+      await getHyperliquidAccount("0xabc", "xyz"); // populate xyz cache
+      const callsBefore = fetchClearinghouseState.mock.calls.length;
+
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      await getHyperliquidAccount("0xabc");
+      await getHyperliquidAccount("0xabc", "xyz");
+      // +1 for the transfer's own fresh source-balance pre-flight check,
+      // +2 for both dex caches being busted and refetched — neither
+      // served stale.
+      expect(fetchClearinghouseState.mock.calls.length).toBe(callsBefore + 3);
+    });
+
+    it("classifies a Hyperliquid-side rejection of the transfer the same as any other action", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "err", response: "Insufficient balance" } });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "hyperliquid-rejected", message: "Insufficient balance" });
+    });
+
+    it("reports network-failure (never a hard failure) when Hyperliquid can't be reached", async () => {
+      postExchange.mockResolvedValue({ ok: false, reason: "network_error", message: "timed out" });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction(), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "network-failure", message: "timed out" });
     });
   });
 });

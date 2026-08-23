@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Wallet, Loader2, TriangleAlert, ExternalLink } from "lucide-react";
+import { Wallet, Loader2, TriangleAlert, ExternalLink, ArrowLeftRight } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { DarkCard } from "@/components/ui/card";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
-import { useHyperliquidAccount, HyperliquidAccountStatus } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { useHyperliquidAccount, useHyperliquidDexAccount, HyperliquidAccountStatus } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 import { ClosePositionModal, type CloseExecutionUiState } from "@/components/hyperliquid/close-position-modal";
+import { FundXyzModal } from "@/components/hyperliquid/fund-xyz-modal";
 import { closePosition, closingOrderParamsForPosition } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import { getConfiguredHip3DexNames, getHip3DexName, getHip3DexFullName } from "@/lib/hyperliquid/asset-mapping";
+import type { DexTransferDirection } from "@/lib/hyperliquid/hyperliquid-dex-transfer";
 import type { HyperliquidPosition, HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -66,7 +69,15 @@ export function HyperliquidAccountPanel() {
   const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage, refresh } = useHyperliquidAccount();
   const { agentStatus, agentWallet } = useHyperliquidAgent();
+  // Phase 8 — the one (today) configured HIP-3 dex, if any. Never
+  // combined with the main account above: a completely separate fetch
+  // against that dex's own isolated margin pool (see asset-mapping.ts's
+  // header comment for why these balances must never look additive).
+  const xyzDex = getConfiguredHip3DexNames()[0] ?? null;
+  const xyzDexFullName = xyzDex ? getHip3DexFullName(xyzDex) : null;
+  const xyzAccount = useHyperliquidDexAccount(xyzDex);
   const [modalOpen, setModalOpen] = useState(false);
+  const [fundModalDirection, setFundModalDirection] = useState<DexTransferDirection | null>(null);
   const [closingPosition, setClosingPosition] = useState<HyperliquidPosition | null>(null);
   const [closeSizeInput, setCloseSizeInput] = useState("");
   const [closeExecutionState, setCloseExecutionState] = useState<CloseExecutionUiState>({ stage: "idle" });
@@ -126,7 +137,13 @@ export function HyperliquidAccountPanel() {
 
     setCloseExecutionState({ stage: "done", result, requestedSize: sizeUnits, szDecimals: freshMarket.szDecimals });
     if (result.status !== "wallet-rejected" && result.status !== "rejected") {
-      refresh();
+      // Refresh whichever pool this position actually lives in — a HIP-3
+      // position's balance/positions never appear in the main account.
+      if (getHip3DexName(closingPosition.coin)) {
+        xyzAccount.refresh();
+      } else {
+        refresh();
+      }
     }
   }
 
@@ -347,6 +364,105 @@ export function HyperliquidAccountPanel() {
         )}
       </div>
     </DarkCard>
+    {xyzDex && xyzDexFullName ? (
+      <DarkCard className="mt-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[14px] font-semibold text-dark-ink">
+            {xyzDexFullName} {t("perpTrade.xyzTradingBalance")}
+          </p>
+          <button
+            onClick={() => setFundModalDirection("fund")}
+            className="flex items-center gap-1 text-[13px] font-medium text-blue-400"
+          >
+            <ArrowLeftRight size={13} />
+            {t("perpTrade.fundXyzButton")}
+          </button>
+        </div>
+
+        {xyzAccount.status === "loading" ? (
+          <Skeleton />
+        ) : xyzAccount.status === "error" || xyzAccount.status === "unavailable" ? (
+          <div className="mt-3 flex items-center gap-1.5 text-dark-ink-muted">
+            <TriangleAlert size={14} />
+            <p className="text-[13px]">{xyzAccount.errorMessage ?? t("hyperliquidAccount.dataUnavailable")}</p>
+          </div>
+        ) : !xyzAccount.snapshot || xyzAccount.snapshot.withdrawableBalance <= 0 ? (
+          <div className="mt-3">
+            <p className="text-[13px] text-dark-ink-muted">{t("perpTrade.zeroXyzBalanceBody")}</p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-[11px] text-dark-ink-muted">{t("hyperliquidAccount.availableBalance")}</p>
+                <p className="text-[16px] font-semibold text-dark-ink">
+                  {formatCurrency(xyzAccount.snapshot.withdrawableBalance)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-dark-ink-muted">{t("hyperliquidAccount.accountValue")}</p>
+                <p className="text-[16px] font-semibold text-dark-ink">{formatCurrency(xyzAccount.snapshot.accountValue)}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setFundModalDirection("withdraw")}
+              className="mt-2 flex items-center gap-1 text-[12px] font-medium text-dark-ink-muted underline-offset-2"
+            >
+              {t("perpTrade.withdrawFromXyzButton")}
+            </button>
+
+            <div className="mt-3">
+              <p className="text-[13px] font-medium text-dark-ink">{t("hyperliquidAccount.positions")}</p>
+              {xyzAccount.snapshot.positions.length === 0 ? (
+                <p className="mt-1 text-[12px] text-dark-ink-muted">{t("hyperliquidAccount.noPositions")}</p>
+              ) : (
+                <div className="mt-1.5 space-y-2">
+                  {xyzAccount.snapshot.positions.map((p) => {
+                    const positive = p.unrealizedPnl >= 0;
+                    return (
+                      <div key={p.coin} className="rounded-xl bg-dark-card-2 px-3 py-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[13px] font-medium text-dark-ink">
+                            {p.coin} · {p.leverage}x
+                          </span>
+                          <span className={cn("text-[13px] font-medium", positive ? "text-positive" : "text-negative")}>
+                            {formatCurrency(p.unrealizedPnl)}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setCloseExecutionState({ stage: "idle" });
+                            setCloseSizeInput(String(Math.abs(p.size)));
+                            setClosingPosition(p);
+                          }}
+                          className="mt-2 w-full rounded-lg border border-dark-border px-3 py-1.5 text-[12px] font-medium text-dark-ink active:opacity-80"
+                        >
+                          {t("hyperliquidAccount.managePosition")}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </DarkCard>
+    ) : null}
+    {fundModalDirection && xyzDex && xyzDexFullName ? (
+      <FundXyzModal
+        direction={fundModalDirection}
+        dex={xyzDex}
+        dexFullName={xyzDexFullName}
+        mainBalance={snapshot.withdrawableBalance}
+        xyzBalance={xyzAccount.snapshot?.withdrawableBalance ?? 0}
+        onClose={() => setFundModalDirection(null)}
+        onSuccess={() => {
+          refresh();
+          xyzAccount.refresh();
+        }}
+      />
+    ) : null}
     {closingPosition ? (
       <ClosePositionModal
         position={closingPosition}

@@ -20,14 +20,21 @@ export async function GET(req: Request) {
   return withApiErrorHandling(async () => {
     await requireUserId(); // auth gate only — never forwarded
 
-    const address = new URL(req.url).searchParams.get("address");
+    const url = new URL(req.url);
+    const address = url.searchParams.get("address");
     if (!address || !isValidEvmAddress(address)) {
       throw new Error("A valid address query parameter is required");
     }
+    // Phase 8: an optional HIP-3 dex ("xyz") reads that dex's own
+    // ISOLATED margin pool instead of the main dex's — never a filtered
+    // view of one shared balance (verified live: the same address holds
+    // a genuinely different balance per dex). Omitted (or empty) means
+    // the main dex, exactly the pre-Phase-8 behavior BTC/ETH still use.
+    const dex = url.searchParams.get("dex") || undefined;
 
     const [account, openOrders, fills] = await Promise.all([
-      getHyperliquidAccount(address),
-      getHyperliquidOpenOrders(address),
+      getHyperliquidAccount(address, dex),
+      getHyperliquidOpenOrders(address, dex),
       getHyperliquidUserFills(address, 20),
     ]);
 

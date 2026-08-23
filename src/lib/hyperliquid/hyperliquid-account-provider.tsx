@@ -133,3 +133,77 @@ export function useHyperliquidAccount(): HyperliquidAccountContextValue {
   if (!ctx) throw new Error("useHyperliquidAccount must be used within a HyperliquidAccountProvider");
   return ctx;
 }
+
+// Phase 8 — a HIP-3 dex (e.g. "xyz") holds its OWN isolated margin pool,
+// separate from the main dex's balance the Context above tracks (verified
+// live: the same address holds a genuinely different accountValue with
+// dex:"xyz" than without it). Deliberately NOT folded into
+// HyperliquidAccountProvider's single global Context — this is only
+// relevant on the trading page and the Portfolio panel for the handful of
+// HIP-3-mapped assets, not something every screen needs to poll for. Same
+// "never fetch while disconnected" guarantee as the main account: dex
+// being null (asset isn't HIP-3-mapped, or not yet resolved) also skips
+// fetching entirely, same as being signed out.
+export type HyperliquidDexAccountContextValue = Omit<HyperliquidAccountContextValue, "openOrders" | "fills"> & {
+  openOrders: HyperliquidOpenOrder[];
+};
+
+export function useHyperliquidDexAccount(dex: string | null): HyperliquidDexAccountContextValue {
+  const { status: sessionStatus } = useSession();
+  const { isConnected, address } = useWallet();
+  const [snapshot, setSnapshot] = useState<HyperliquidAccountSnapshot | null>(null);
+  const [openOrders, setOpenOrders] = useState<HyperliquidOpenOrder[]>([]);
+  const [status, setStatus] = useState<HyperliquidAccountStatus>("disconnected");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (sessionStatus !== "authenticated" || !isConnected || !address || !dex) {
+      setSnapshot(null);
+      setOpenOrders([]);
+      setStatus("disconnected");
+      setErrorMessage(null);
+      return;
+    }
+
+    setStatus("loading");
+    try {
+      const res = await fetch(`/api/hyperliquid/account?address=${address}&dex=${dex}`, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        throw new Error(`/api/hyperliquid/account request failed (${res.status})`);
+      }
+      const json = (await res.json()) as { account: HyperliquidAccountFetchResult; openOrders: HyperliquidOpenOrdersFetchResult };
+
+      if (json.account.status !== "ok") {
+        setSnapshot(null);
+        setOpenOrders([]);
+        setStatus("unavailable");
+        setErrorMessage(json.account.reason);
+        return;
+      }
+
+      const orders = json.openOrders.status === "ok" ? json.openOrders.orders : [];
+      setSnapshot(json.account.account);
+      setOpenOrders(orders);
+      setErrorMessage(null);
+      setStatus(json.account.account.positions.length === 0 && orders.length === 0 ? "empty" : "ok");
+    } catch (err) {
+      setSnapshot(null);
+      setOpenOrders([]);
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : "Couldn't load your XYZ trading balance");
+    }
+  }, [sessionStatus, isConnected, address, dex]);
+
+  useEffect(() => {
+    const kickoff = setTimeout(refresh, 0);
+    const interval = setInterval(refresh, POLL_INTERVAL_MS);
+    return () => {
+      clearTimeout(kickoff);
+      clearInterval(interval);
+    };
+  }, [refresh]);
+
+  return { snapshot, openOrders, status, errorMessage, refresh };
+}

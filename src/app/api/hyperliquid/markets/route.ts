@@ -9,12 +9,22 @@
 import { NextResponse } from "next/server";
 import { isHyperliquidEnabled, isHyperliquidTestnet } from "@/server/hyperliquid/config";
 import { getHyperliquidMarkets } from "@/server/hyperliquid/service";
+import { getUsdcTokenId } from "@/server/hyperliquid/markets";
 
 export async function GET() {
-  const result = await getHyperliquidMarkets();
+  const [result, usdcTokenId] = await Promise.all([getHyperliquidMarkets(), getUsdcTokenId()]);
   // isTestnet lets the client (Phase 4's order signer) know which network
   // it's about to sign for, without needing its own NEXT_PUBLIC_ env var —
   // this is the same request the trading page already makes for a fresh
   // price right before signing, so it's not an extra round trip.
-  return NextResponse.json({ enabled: isHyperliquidEnabled(), isTestnet: isHyperliquidTestnet(), result });
+  // usdcTokenId (Phase 8) is the real "USDC:0x..." identifier a sendAsset
+  // transfer needs — DIFFERENT between mainnet and testnet, so the client
+  // fetches it live here rather than hardcoding it. Null only if
+  // Hyperliquid's spotMeta itself couldn't be reached.
+  return NextResponse.json({
+    enabled: isHyperliquidEnabled(),
+    isTestnet: isHyperliquidTestnet(),
+    usdcTokenId,
+    result,
+  });
 }

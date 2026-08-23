@@ -29,9 +29,29 @@ describe("getAllAssetTradingProfiles — the exact trading universe by category"
     }
   });
 
-  it("real trading is available for exactly the assets with a verified Hyperliquid mapping — today, btc and eth only", () => {
+  it("real trading is available for exactly the assets with a verified Hyperliquid mapping", () => {
     const realTradeable = profiles.filter((p) => p.realTradingAvailable).map((p) => p.assetId);
     expect(new Set(realTradeable)).toEqual(new Set(getTradeableAssetIds()));
+  });
+
+  it("venue/dex is set for exactly the real-tradeable assets — native for btc/eth, hip3 for the xyz-mapped ones", () => {
+    for (const p of profiles) {
+      if (!p.realTradingAvailable) {
+        expect(p.venue).toBeNull();
+        expect(p.dex).toBeNull();
+        expect(p.dexFullName).toBeNull();
+        continue;
+      }
+      if (p.assetId === "btc" || p.assetId === "eth") {
+        expect(p.venue).toBe("native");
+        expect(p.dex).toBeNull();
+        expect(p.dexFullName).toBeNull();
+      } else {
+        expect(p.venue).toBe("hip3");
+        expect(p.dex).toBe("xyz");
+        expect(p.dexFullName).toBe("XYZ");
+      }
+    }
   });
 
   it("every real-tradeable asset has a non-null hyperliquidCoin — no asset is marked real-tradeable without a verified mapping", () => {
@@ -55,13 +75,15 @@ describe("getAllAssetTradingProfiles — the exact trading universe by category"
     }
   });
 
-  it("S&P 500 and NASDAQ 100 keep their intended display names and are correctly non-real-tradeable", () => {
+  it("S&P 500 keeps its intended display name and is now real-tradeable via xyz:SP500; NASDAQ 100 stays Paper-only — no verified match", () => {
     const sp500 = profiles.find((p) => p.assetId === "sp500")!;
     const nasdaq = profiles.find((p) => p.assetId === "nasdaq")!;
     expect(sp500.name).toBe("S&P 500");
-    expect(sp500.realTradingAvailable).toBe(false);
+    expect(sp500.realTradingAvailable).toBe(true);
+    expect(sp500.hyperliquidCoin).toBe("xyz:SP500");
     expect(nasdaq.name).toBe("Nasdaq 100");
     expect(nasdaq.realTradingAvailable).toBe(false);
+    expect(nasdaq.hyperliquidCoin).toBeNull();
   });
 });
 
@@ -70,7 +92,7 @@ describe("getAssetTradingProfile", () => {
     expect(getAssetTradingProfile("not-a-real-asset")).toBeNull();
   });
 
-  it("Bitcoin: human name, crypto category, real Hyperliquid mapping, both trading modes available", () => {
+  it("Bitcoin: human name, crypto category, native Hyperliquid mapping, both trading modes available", () => {
     const btc = getAssetTradingProfile("btc");
     expect(btc).toEqual({
       assetId: "btc",
@@ -78,19 +100,41 @@ describe("getAssetTradingProfile", () => {
       category: "crypto",
       underlying: "Bitcoin",
       hyperliquidCoin: "BTC",
+      venue: "native",
+      dex: null,
+      dexFullName: null,
       paperTradingAvailable: true,
       realTradingAvailable: true,
     });
   });
 
-  it("Apple: human name, stock category, no Hyperliquid mapping, Paper Trading only", () => {
+  it("Apple: human name, stock category, xyz HIP-3 mapping, both trading modes available", () => {
     const aapl = getAssetTradingProfile("aapl");
     expect(aapl).toEqual({
       assetId: "aapl",
       name: "Apple Inc.",
       category: "stock",
       underlying: "Apple Inc.",
+      hyperliquidCoin: "xyz:AAPL",
+      venue: "hip3",
+      dex: "xyz",
+      dexFullName: "XYZ",
+      paperTradingAvailable: true,
+      realTradingAvailable: true,
+    });
+  });
+
+  it("Nasdaq 100: human name, index category, no verified Hyperliquid mapping, Paper Trading only", () => {
+    const nasdaq = getAssetTradingProfile("nasdaq");
+    expect(nasdaq).toEqual({
+      assetId: "nasdaq",
+      name: "Nasdaq 100",
+      category: "index",
+      underlying: "Nasdaq 100",
       hyperliquidCoin: null,
+      venue: null,
+      dex: null,
+      dexFullName: null,
       paperTradingAvailable: true,
       realTradingAvailable: false,
     });

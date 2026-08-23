@@ -80,6 +80,7 @@ describe("Hyperliquid Trading (preview + real execution) stays isolated and cent
     "src/lib/hyperliquid/hyperliquid-order-signer.ts",
     "src/lib/hyperliquid/hyperliquid-agent-wallet.ts",
     "src/lib/hyperliquid/hyperliquid-agent-provider.tsx",
+    "src/lib/hyperliquid/hyperliquid-dex-transfer.ts",
     "src/app/api/hyperliquid/order/route.ts",
     "src/components/hyperliquid/perp-order-preview-sheet.tsx",
     "src/components/hyperliquid/close-position-modal.tsx",

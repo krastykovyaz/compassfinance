@@ -116,7 +116,7 @@ type WalletConnectInternals = {
  * its own (immutable, negotiated-once) namespace data — never from any
  * live-tracked, event-mutable "current chain" pointer. Returns null for
  * a non-WalletConnect provider or one with no session yet. */
-function walletConnectApprovedChains(provider: Eip1193Provider): string[] | null {
+export function walletConnectApprovedChains(provider: Eip1193Provider): string[] | null {
   const chains = (provider as unknown as WalletConnectInternals).session?.namespaces?.eip155?.chains;
   return chains && chains.length > 0 ? chains : null;
 }
@@ -124,7 +124,7 @@ function walletConnectApprovedChains(provider: Eip1193Provider): string[] | null
 /** Prefer Arbitrum One (this app's primary chain) if it's approved;
  * otherwise whichever approved chain comes first — either way, only
  * ever a chain the session itself actually approved. */
-function preferredApprovedChain(chains: string[]): number {
+export function preferredApprovedChain(chains: string[]): number {
   const preferred = chains.find((c) => c === "eip155:42161") ?? chains[0];
   return Number(preferred.split(":")[1]);
 }

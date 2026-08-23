@@ -34,6 +34,18 @@ export type HyperliquidMarketSnapshot = {
    * bounds price precision). Used by the Phase 4 order signer to format a
    * valid price/size before signing. */
   szDecimals: number;
+  /** "native" for the standard/main Hyperliquid dex (btc/eth today),
+   * "hip3" for a builder-deployed perp dex (e.g. "xyz"'s stocks/gold/
+   * oil/SP500) — HIP-3 markets have a materially different trust model
+   * (the deployer sets its own oracle price) and an ISOLATED margin pool
+   * separate from the main dex's balance. The Details panel and the
+   * trading page's balance section both branch on this. */
+  venue: "native" | "hip3";
+  /** HIP-3 dex short name ("xyz"), or null for a native-venue market. */
+  dex: string | null;
+  /** The dex's own display name ("XYZ"), or null for a native-venue
+   * market — shown in the Details panel's "Oracle/deployer" row. */
+  dexFullName: string | null;
 };
 
 /** From /api/hyperliquid/markets — never fabricated data. */
@@ -155,7 +167,8 @@ export type HyperliquidExchangeRejectionReason =
   | "leverage-exceeds-max"
   | "insufficient-balance"
   | "invalid-request"
-  | "real-trading-locked";
+  | "real-trading-locked"
+  | "invalid-transfer";
 
 export type HyperliquidExchangeResult =
   | { status: "resting"; orderId: number }

@@ -10,11 +10,17 @@
 
 import { getOrFetch, invalidate } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
-import { isTradableHyperliquidCoin, getAssetIdForHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
+import {
+  isTradableHyperliquidCoin,
+  getAssetIdForHyperliquidCoin,
+  getConfiguredHip3DexNames,
+  getHip3DexName,
+  getHip3DexFullName,
+} from "@/lib/hyperliquid/asset-mapping";
 import { isRealTradingUnlocked } from "@/lib/hyperliquid/real-trading-access";
 import { getAsset } from "@/lib/assets/catalog";
 import { getServerLearningProgress } from "@/server/repositories/learning-repository";
-import { getHyperliquidUniverse } from "./markets";
+import { getHyperliquidUniverse, getHyperliquidPerpDexIndex, getUsdcTokenId } from "./markets";
 import {
   fetchMetaAndAssetCtxs,
   fetchCandleSnapshot,
@@ -57,11 +63,103 @@ function toNumber(value: string): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
+/** Snapshots for one dex's worth of Hyperliquid perpetuals (the native/
+ * main dex when `dex` is undefined, otherwise one builder-deployed HIP-3
+ * dex) — the one place that parses meta+assetCtxs into
+ * HyperliquidMarketSnapshot[], reused by getHyperliquidMarkets for both.
+ * A HIP-3 dex this Hyperliquid deployment doesn't currently resolve (or
+ * whose fetch fails) degrades to an empty list rather than throwing —
+ * that dex's markets are just missing, native BTC/ETH must never go down
+ * because of it. A native-dex failure DOES throw (a real outage), exactly
+ * matching this function's pre-Phase-8 behavior. */
+async function buildDexMarketSnapshots(
+  dex: string | undefined,
+  venue: "native" | "hip3",
+  dexFullName: string | null,
+  timestamp: number
+): Promise<HyperliquidMarketSnapshot[]> {
+  let dexIndex = 0;
+  if (dex) {
+    const idx = await getHyperliquidPerpDexIndex(dex);
+    if (idx === null) return [];
+    dexIndex = idx;
+  }
+
+  const fetched = await fetchMetaAndAssetCtxs(dex);
+  if (!fetched.ok) {
+    if (!dex) throw new Error(fetched.message);
+    return [];
+  }
+  const [meta, assetCtxs] = fetched.data;
+
+  const result: HyperliquidMarketSnapshot[] = [];
+  for (let i = 0; i < meta.universe.length; i++) {
+    const coin = meta.universe[i].name;
+
+    // Filter to approved CompassFinance assets only — Hyperliquid's
+    // universe (native + every HIP-3 dex combined) has hundreds of
+    // markets total, and this app must never show "a list of raw
+    // Hyperliquid markets" (see asset-mapping.ts for exactly which coins
+    // are approved and why). This is the one place that decides what
+    // Markets is even allowed to see.
+    const compassAssetId = getAssetIdForHyperliquidCoin(coin);
+    if (!compassAssetId) continue;
+    const catalogEntry = getAsset(compassAssetId);
+    if (!catalogEntry) continue; // defensive — mapping should never point at a missing catalog entry
+
+    const maxLeverage = meta.universe[i].maxLeverage;
+    const szDecimals = meta.universe[i].szDecimals;
+    const ctx = assetCtxs[i];
+    const price = toNumber(ctx.markPx);
+    const prevDayPx = toNumber(ctx.prevDayPx);
+    const volume24h = toNumber(ctx.dayNtlVlm);
+    const fundingRate = toNumber(ctx.funding);
+
+    if (
+      [price, prevDayPx, volume24h, fundingRate].some(Number.isNaN) ||
+      !Number.isFinite(maxLeverage) ||
+      !Number.isFinite(szDecimals)
+    ) {
+      console.error(`[hyperliquid-service] skipping ${coin}: non-numeric field in asset context`);
+      continue;
+    }
+
+    const change24h = price - prevDayPx;
+    const changePercent24h = prevDayPx !== 0 ? (change24h / prevDayPx) * 100 : 0;
+    // Native: a plain universe index. HIP-3: Hyperliquid's own documented
+    // asset-id formula (100000 + perp_dex_index*10000 + index_in_meta) —
+    // computed fresh every fetch, never hardcoded, so a market's order-
+    // ready id stays correct even if a dex's universe gets reordered.
+    const assetIndex = dex ? 100000 + dexIndex * 10000 + i : i;
+
+    result.push({
+      assetId: coin,
+      symbol: coin,
+      displayName: catalogEntry.name,
+      compassAssetId,
+      price,
+      change24h,
+      changePercent24h,
+      volume24h,
+      fundingRate,
+      timestamp,
+      maxLeverage,
+      assetIndex,
+      szDecimals,
+      venue,
+      dex: dex ?? null,
+      dexFullName,
+    });
+  }
+  return result;
+}
+
 /**
  * Live snapshot (price, 24h change/volume, funding) for every Hyperliquid
- * perpetual market, from a single upstream call. A market whose fields
- * don't parse cleanly is skipped (logged) rather than shown with a
- * fabricated number — mirrors yahoo-client.ts's null-candle-skip idiom.
+ * perpetual market Compass has approved — native dex plus every
+ * configured HIP-3 dex. A market whose fields don't parse cleanly is
+ * skipped (logged) rather than shown with a fabricated number — mirrors
+ * yahoo-client.ts's null-candle-skip idiom.
  */
 export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult> {
   if (!isHyperliquidEnabled()) {
@@ -70,63 +168,11 @@ export async function getHyperliquidMarkets(): Promise<HyperliquidMarketsResult>
 
   try {
     const markets = await getOrFetch("hl:markets", MARKETS_CACHE_TTL_MS, async () => {
-      const fetched = await fetchMetaAndAssetCtxs();
-      if (!fetched.ok) {
-        // Thrown so getOrFetch does NOT cache the failure.
-        throw new Error(fetched.message);
-      }
-      const [meta, assetCtxs] = fetched.data;
-
-      const result: HyperliquidMarketSnapshot[] = [];
       const timestamp = Date.now();
-      for (let i = 0; i < meta.universe.length; i++) {
-        const coin = meta.universe[i].name;
-
-        // Filter to approved CompassFinance assets only — Hyperliquid's
-        // universe has ~200 markets total, and this app must never show
-        // "a list of raw Hyperliquid markets" (see asset-mapping.ts for
-        // exactly which coins are approved and why). This is the one
-        // place that decides what Markets is even allowed to see.
-        const compassAssetId = getAssetIdForHyperliquidCoin(coin);
-        if (!compassAssetId) continue;
-        const catalogEntry = getAsset(compassAssetId);
-        if (!catalogEntry) continue; // defensive — mapping should never point at a missing catalog entry
-
-        const maxLeverage = meta.universe[i].maxLeverage;
-        const szDecimals = meta.universe[i].szDecimals;
-        const ctx = assetCtxs[i];
-        const price = toNumber(ctx.markPx);
-        const prevDayPx = toNumber(ctx.prevDayPx);
-        const volume24h = toNumber(ctx.dayNtlVlm);
-        const fundingRate = toNumber(ctx.funding);
-
-        if (
-          [price, prevDayPx, volume24h, fundingRate].some(Number.isNaN) ||
-          !Number.isFinite(maxLeverage) ||
-          !Number.isFinite(szDecimals)
-        ) {
-          console.error(`[hyperliquid-service] skipping ${coin}: non-numeric field in asset context`);
-          continue;
-        }
-
-        const change24h = price - prevDayPx;
-        const changePercent24h = prevDayPx !== 0 ? (change24h / prevDayPx) * 100 : 0;
-
-        result.push({
-          assetId: coin,
-          symbol: coin,
-          displayName: catalogEntry.name,
-          compassAssetId,
-          price,
-          change24h,
-          changePercent24h,
-          volume24h,
-          fundingRate,
-          timestamp,
-          maxLeverage,
-          assetIndex: i,
-          szDecimals,
-        });
+      const result = await buildDexMarketSnapshots(undefined, "native", null, timestamp);
+      for (const dexName of getConfiguredHip3DexNames()) {
+        const hip3 = await buildDexMarketSnapshots(dexName, "hip3", getHip3DexFullName(dexName), timestamp);
+        result.push(...hip3);
       }
       return result;
     });
@@ -288,7 +334,16 @@ async function getUnifiedAccountOverride(
   return { accountValue: usdcTotal, withdrawableBalance: Number.isNaN(available) ? usdcTotal : available };
 }
 
-export async function getHyperliquidAccount(address: string): Promise<HyperliquidAccountResult> {
+/** `dex` selects which margin pool to read — omitted (native) reads the
+ * main dex, exactly the pre-Phase-8 behavior BTC/ETH still use. A HIP-3
+ * dex's pool is ISOLATED from the main one (verified live: the same
+ * address holds a genuinely different accountValue with dex:"xyz" than
+ * without it), so this is never a filtered view of one shared number —
+ * it's a real, separate fetch. Unified Account Mode's spot<->perp
+ * override only ever applies to the main dex's own balance (there is no
+ * evidence, and this codebase makes no assumption, that it reaches into
+ * an isolated HIP-3 pool too) — so it's skipped entirely when `dex` is set. */
+export async function getHyperliquidAccount(address: string, dex?: string): Promise<HyperliquidAccountResult> {
   if (!address || !address.trim()) {
     return { status: "unavailable", reason: "address is required" };
   }
@@ -297,8 +352,8 @@ export async function getHyperliquidAccount(address: string): Promise<Hyperliqui
   }
 
   try {
-    const account = await getOrFetch(`hl:account:${address}`, ACCOUNT_CACHE_TTL_MS, async () => {
-      const fetched = await fetchClearinghouseState(address);
+    const account = await getOrFetch(`hl:account:${address}:${dex ?? "main"}`, ACCOUNT_CACHE_TTL_MS, async () => {
+      const fetched = await fetchClearinghouseState(address, dex);
       if (!fetched.ok) {
         throw new Error(fetched.message);
       }
@@ -310,7 +365,7 @@ export async function getHyperliquidAccount(address: string): Promise<Hyperliqui
       // A failed detection/spot lookup falls back to the classic values
       // already computed above rather than failing the whole account
       // view — this override is additive, never the only source of truth.
-      const override = await getUnifiedAccountOverride(address);
+      const override = dex ? null : await getUnifiedAccountOverride(address);
       if (override) {
         accountValue = override.accountValue;
         withdrawableBalance = override.withdrawableBalance;
@@ -334,7 +389,10 @@ export async function getHyperliquidAccount(address: string): Promise<Hyperliqui
   }
 }
 
-export async function getHyperliquidOpenOrders(address: string): Promise<HyperliquidOpenOrdersResult> {
+/** Per Hyperliquid's own docs, "dex" here defaults to the main dex ONLY —
+ * unlike userFills, a HIP-3 dex's open orders are never included unless
+ * this is explicitly passed. */
+export async function getHyperliquidOpenOrders(address: string, dex?: string): Promise<HyperliquidOpenOrdersResult> {
   if (!address || !address.trim()) {
     return { status: "unavailable", reason: "address is required" };
   }
@@ -343,8 +401,8 @@ export async function getHyperliquidOpenOrders(address: string): Promise<Hyperli
   }
 
   try {
-    const orders = await getOrFetch(`hl:orders:${address}`, ACCOUNT_CACHE_TTL_MS, async () => {
-      const fetched = await fetchOpenOrders(address);
+    const orders = await getOrFetch(`hl:orders:${address}:${dex ?? "main"}`, ACCOUNT_CACHE_TTL_MS, async () => {
+      const fetched = await fetchOpenOrders(address, dex);
       if (!fetched.ok) {
         throw new Error(fetched.message);
       }
@@ -417,7 +475,7 @@ export async function getHyperliquidUserFills(address: string, limit = 20): Prom
 // and classify Hyperliquid's real response. Never wrapped in getOrFetch —
 // a write must never be cached or deduplicated. ---
 
-const EXCHANGE_ACTION_TYPES: HyperliquidExchangeActionType[] = ["updateLeverage", "order", "approveAgent"];
+const EXCHANGE_ACTION_TYPES: HyperliquidExchangeActionType[] = ["updateLeverage", "order", "approveAgent", "sendAsset"];
 
 function isValidExchangeActionType(value: unknown): value is HyperliquidExchangeActionType {
   return typeof value === "string" && (EXCHANGE_ACTION_TYPES as string[]).includes(value);
@@ -523,19 +581,43 @@ function classifyExchangeResponse(raw: unknown): HyperliquidExchangeResult {
   return { status: "hyperliquid-rejected", message: "Unrecognized order status from Hyperliquid" };
 }
 
-/** Busts the cached account/orders/fills views for `address` — called
- * after a real order/leverage submission reaches Hyperliquid, whatever
- * the outcome. Without this, getHyperliquidAccount's 10s getOrFetch
- * cache could serve pre-trade data to the client-side refresh() call
- * that runs immediately after a trade completes, making a genuinely
- * successful (or ambiguous network-failure) trade look like it never
- * happened for up to that whole 10s window. Never called for a
- * pre-flight rejection (disabled/invalid/insufficient-balance/etc) —
- * those never reach Hyperliquid, so nothing upstream changed. */
-function invalidateAccountCache(address: string): void {
-  invalidate(`hl:account:${address}`);
-  invalidate(`hl:orders:${address}`);
-  invalidate(`hl:fills:${address}`);
+/** Busts the cached account/orders/fills views for `address` (and,
+ * separately, `dex`) — called after a real order/leverage/transfer
+ * submission reaches Hyperliquid, whatever the outcome. Without this,
+ * getHyperliquidAccount's 10s getOrFetch cache could serve pre-trade data
+ * to the client-side refresh() call that runs immediately after a trade
+ * completes, making a genuinely successful (or ambiguous network-
+ * failure) trade look like it never happened for up to that whole 10s
+ * window. Never called for a pre-flight rejection (disabled/invalid/
+ * insufficient-balance/etc) — those never reach Hyperliquid, so nothing
+ * upstream changed. `dex` undefined busts the native/main pool's cache;
+ * pass it explicitly for a HIP-3 order, or call this twice (once per
+ * side) after a cross-dex sendAsset transfer. */
+function invalidateAccountCache(address: string, dex?: string): void {
+  invalidate(`hl:account:${address}:${dex ?? "main"}`);
+  invalidate(`hl:orders:${address}:${dex ?? "main"}`);
+  invalidate(`hl:fills:${address}`); // userFills has no dex scoping — one shared cache entry
+}
+
+/** Pure extraction of a sendAsset action's transfer fields — no
+ * validation here (see submitHyperliquidExchangeAction for that), just
+ * type-narrowing the raw action object. Returns null for a malformed
+ * shape so the caller can reject before ever contacting Hyperliquid. */
+function extractSendAssetParams(
+  action: Record<string, unknown>
+): { destination: string; sourceDex: string; destinationDex: string; token: string; amount: string } | null {
+  if (action.type !== "sendAsset") return null;
+  const { destination, sourceDex, destinationDex, token, amount } = action;
+  if (
+    typeof destination !== "string" ||
+    typeof sourceDex !== "string" ||
+    typeof destinationDex !== "string" ||
+    typeof token !== "string" ||
+    typeof amount !== "string"
+  ) {
+    return null;
+  }
+  return { destination, sourceDex, destinationDex, token, amount };
 }
 
 export async function submitHyperliquidExchangeAction(
@@ -568,6 +650,72 @@ export async function submitHyperliquidExchangeAction(
     }
   }
 
+  // sendAsset (Phase 8) — the collateral transfer that funds/withdraws a
+  // HIP-3 dex's isolated margin pool. Not a trade either, but far more
+  // narrowly validated than approveAgent: unlike every other action here,
+  // its `destination` field can name ANY address, and its `sourceDex`/
+  // `destinationDex` are free-form strings Hyperliquid itself accepts
+  // for arbitrary dexes — nothing about the shape alone stops a bug in
+  // the client from constructing a transfer to the wrong place. The real
+  // security boundary is still the wallet's own signature (the user sees
+  // and approves the literal payload before signing), but this server
+  // still refuses to even relay a payload that isn't exactly the one
+  // narrow shape CompassFinance's funding/withdraw UI is meant to
+  // produce: to yourself, between the main dex and one of the HIP-3
+  // dexes this app actually knows about, moving only the real USDC token.
+  if (action.type === "sendAsset") {
+    const transfer = extractSendAssetParams(action);
+    if (!transfer) {
+      return { status: "rejected", reason: "invalid-request", message: "Malformed transfer parameters" };
+    }
+    if (transfer.destination.toLowerCase() !== address.toLowerCase()) {
+      return { status: "rejected", reason: "invalid-transfer", message: "Transfers may only be made to your own address" };
+    }
+    const configuredDexes = new Set(getConfiguredHip3DexNames());
+    const isKnownDex = (d: string) => d === "" || configuredDexes.has(d);
+    if (!isKnownDex(transfer.sourceDex) || !isKnownDex(transfer.destinationDex)) {
+      return { status: "rejected", reason: "invalid-transfer", message: "Unknown transfer source or destination" };
+    }
+    if (transfer.sourceDex === transfer.destinationDex) {
+      return { status: "rejected", reason: "invalid-transfer", message: "Source and destination must differ" };
+    }
+    const usdcTokenId = await getUsdcTokenId();
+    if (!usdcTokenId || transfer.token !== usdcTokenId) {
+      return { status: "rejected", reason: "invalid-transfer", message: "Only USDC may be transferred" };
+    }
+    const amount = Number(transfer.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { status: "rejected", reason: "invalid-request", message: "Enter a transfer amount greater than 0" };
+    }
+    // Fresh, uncached balance check against the SOURCE pool specifically
+    // — same UX-courtesy pattern as the order pre-flight check (never the
+    // real security boundary; Hyperliquid's own ledger is authoritative
+    // and will reject an actually-overdrawn transfer regardless).
+    const sourceState = await fetchClearinghouseState(address, transfer.sourceDex || undefined);
+    if (!sourceState.ok) {
+      return { status: "rejected", reason: "invalid-request", message: "Couldn't verify your balance" };
+    }
+    const sourceWithdrawable = toNumber(sourceState.data.withdrawable);
+    if (!Number.isNaN(sourceWithdrawable) && amount > sourceWithdrawable) {
+      return { status: "rejected", reason: "insufficient-balance", message: "Amount exceeds your available balance" };
+    }
+
+    try {
+      const result = await postExchange<unknown>({ action, nonce, signature });
+      invalidateAccountCache(address, transfer.sourceDex || undefined);
+      invalidateAccountCache(address, transfer.destinationDex || undefined);
+      if (!result.ok) {
+        return { status: "network-failure", message: result.message };
+      }
+      return classifyExchangeResponse(result.data);
+    } catch (err) {
+      invalidateAccountCache(address, transfer.sourceDex || undefined);
+      invalidateAccountCache(address, transfer.destinationDex || undefined);
+      const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
+      return { status: "network-failure", message };
+    }
+  }
+
   const assetIndex = extractAssetIndex(action);
   if (assetIndex === null) {
     return { status: "rejected", reason: "invalid-request", message: "Missing or invalid asset reference" };
@@ -581,6 +729,9 @@ export async function submitHyperliquidExchangeAction(
   if (!asset || !isTradableHyperliquidCoin(asset.coin)) {
     return { status: "rejected", reason: "unknown-coin", message: "This asset isn't available for trading" };
   }
+  // Which margin pool this action's balance check/cache invalidation must
+  // use — null for the native/main dex, a HIP-3 dex short name otherwise.
+  const dex = getHip3DexName(asset.coin);
 
   if (action.type === "updateLeverage") {
     const leverage = extractLeverage(action);
@@ -629,15 +780,20 @@ export async function submitHyperliquidExchangeAction(
     // This is a UX courtesy, not the real security boundary: Hyperliquid's
     // own margin engine is authoritative and will reject an actually-
     // undermargined order regardless of what this check concludes.
-    const fresh = await fetchClearinghouseState(address);
+    //
+    // Phase 8: a HIP-3 asset's margin lives in that dex's own ISOLATED
+    // pool — checking the main dex's balance here would be checking the
+    // wrong number entirely (verified live: the same address holds a
+    // genuinely different balance per dex). Unified Account Mode's
+    // spot<->perp override only ever applies to the main dex, so it's
+    // skipped for a dex-qualified asset, same reasoning as
+    // getHyperliquidAccount.
+    const fresh = await fetchClearinghouseState(address, dex ?? undefined);
     if (!fresh.ok) {
       return { status: "rejected", reason: "invalid-request", message: "Couldn't verify account balance" };
     }
     let withdrawable = toNumber(fresh.data.withdrawable);
-    // Same Unified Account Mode override getHyperliquidAccount applies —
-    // without it, a unified wallet's classic (stale) $0 would wrongly
-    // reject a real, adequately-funded order.
-    const override = await getUnifiedAccountOverride(address);
+    const override = dex ? null : await getUnifiedAccountOverride(address);
     if (override) withdrawable = override.withdrawableBalance;
     if (!Number.isNaN(withdrawable) && notional > withdrawable * asset.maxLeverage) {
       return {
@@ -650,7 +806,7 @@ export async function submitHyperliquidExchangeAction(
 
   try {
     const result = await postExchange<unknown>({ action, nonce, signature });
-    invalidateAccountCache(address);
+    invalidateAccountCache(address, dex ?? undefined);
     if (!result.ok) {
       // Could not confirm Hyperliquid ever received/processed this —
       // never reported as a hard failure, since it may have gone through.
@@ -658,7 +814,7 @@ export async function submitHyperliquidExchangeAction(
     }
     return classifyExchangeResponse(result.data);
   } catch (err) {
-    invalidateAccountCache(address);
+    invalidateAccountCache(address, dex ?? undefined);
     const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
     return { status: "network-failure", message };
   }

@@ -24,16 +24,13 @@ function progress(overrides: Partial<LearningProgress> = {}): LearningProgress {
 }
 
 describe("getRealTradingAccess — the Phase 7 real-trading education gate", () => {
-  it("LOCKED_NO_MARKET for an approved asset with no verified Hyperliquid mapping, no matter how complete the progress is", () => {
+  it("LOCKED_NO_MARKET for nasdaq — the one approved asset with no verified Hyperliquid mapping, no matter how complete the progress is", () => {
     const fullyDoneEverything = progress({
-      completedLessons: ["aapl"],
-      completedQuizzes: ["aapl"],
-      practiceTradedAssetIds: ["aapl"],
-      unlockedAchievements: ["STOCK_EXPLORER"],
+      completedLessons: ["nasdaq"],
+      completedQuizzes: ["nasdaq"],
+      practiceTradedAssetIds: ["nasdaq"],
     });
-    expect(getRealTradingAccess("aapl", fullyDoneEverything)).toBe("LOCKED_NO_MARKET");
-    expect(getRealTradingAccess("sp500", fullyDoneEverything)).toBe("LOCKED_NO_MARKET");
-    expect(getRealTradingAccess("gold", fullyDoneEverything)).toBe("LOCKED_NO_MARKET");
+    expect(getRealTradingAccess("nasdaq", fullyDoneEverything)).toBe("LOCKED_NO_MARKET");
   });
 
   it("LOCKED_EDUCATION when the required course/quiz aren't complete yet, even with a practice trade already on record", () => {

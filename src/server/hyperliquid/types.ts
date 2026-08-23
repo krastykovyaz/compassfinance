@@ -30,6 +30,12 @@ export type HyperliquidMarketSnapshot = {
    * bounds price precision (price allows at most 6 - szDecimals decimal
    * places for perps). From the same meta.universe entry. */
   szDecimals: number;
+  /** "native" for the standard/main Hyperliquid dex, "hip3" for a
+   * builder-deployed perp dex — see asset-mapping.ts's header comment for
+   * the trust/isolated-margin distinction this drives downstream. */
+  venue: "native" | "hip3";
+  dex: string | null;
+  dexFullName: string | null;
 };
 
 /** Deliberately identical shape to src/server/market/service.ts's CandlePoint
@@ -138,10 +144,13 @@ export type HyperliquidFillsResult =
 // itself has answered.
 // ---------------------------------------------------------------------------
 
-/** The only two action types this relay will ever forward — anything else
- * is rejected before Hyperliquid is ever contacted. Deliberately NOT a
- * generic signed-action proxy. */
-export type HyperliquidExchangeActionType = "updateLeverage" | "order" | "approveAgent";
+/** The only action types this relay will ever forward — anything else is
+ * rejected before Hyperliquid is ever contacted. Deliberately NOT a
+ * generic signed-action proxy. sendAsset (Phase 8) is the one exception
+ * to "trading actions only" — it's the collateral transfer used to fund/
+ * withdraw a HIP-3 dex's isolated margin pool, validated far more
+ * strictly than the others (see submitHyperliquidExchangeAction). */
+export type HyperliquidExchangeActionType = "updateLeverage" | "order" | "approveAgent" | "sendAsset";
 
 export type HyperliquidSignature = { r: string; s: string; v: number };
 
@@ -163,7 +172,8 @@ export type HyperliquidExchangeRejectionReason =
   | "leverage-exceeds-max"
   | "insufficient-balance"
   | "invalid-request"
-  | "real-trading-locked";
+  | "real-trading-locked"
+  | "invalid-transfer";
 
 export type HyperliquidExchangeResult =
   | { status: "resting"; orderId: number }
