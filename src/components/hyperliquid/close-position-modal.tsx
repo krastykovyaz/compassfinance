@@ -1,11 +1,13 @@
 "use client";
 
-// Close Position — a single reduce-only market order sized to exactly
-// close an existing Hyperliquid position. Deliberately minimal: the user
-// never edits size or side (both are derived from the real position,
-// see closingOrderParamsForPosition in hyperliquid-order-signer.ts), and
-// this is always a market order at Reduce Only — nothing else to choose.
-// Reuses ResultBanner from perp-order-preview-sheet.tsx so a fill/reject/
+// Close/Reduce Position — a single reduce-only market order against an
+// existing Hyperliquid position. Side is NEVER editable (always derived
+// from the real position — see closingOrderParamsForPosition in
+// hyperliquid-order-signer.ts): only the amount to close is, capped at
+// the position's own full size, so this same flow covers both a partial
+// reduce (amount < full size) and a full close (amount = full size) —
+// one action, not two. Always a market order at Reduce Only. Reuses
+// ResultBanner from perp-order-preview-sheet.tsx so a fill/reject/
 // wallet-rejection reads identically to opening a position.
 
 import { X, Loader2, TriangleAlert } from "lucide-react";
@@ -20,6 +22,8 @@ export type CloseExecutionUiState =
   | { stage: "signing" | "submitting" }
   | { stage: "done"; result: PerpOrderExecutionResult };
 
+const CLOSE_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
@@ -31,12 +35,20 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export function ClosePositionModal({
   position,
+  sizeInput,
+  onSizeInputChange,
   agentReady,
   executionState,
   onConfirm,
   onClose,
 }: {
   position: HyperliquidPosition;
+  /** Controlled amount-to-close, in the position's own coin units — a
+   * plain string so the number input can hold an in-progress value
+   * (e.g. "0.001" mid-typing) without fighting number parsing. Never
+   * pre-derived beyond "starts equal to the full position size". */
+  sizeInput: string;
+  onSizeInputChange: (value: string) => void;
   /** False when no agent has been approved yet (see
    * hyperliquid-agent-provider.tsx) — closing still needs a real
    * signature, same as opening does. */
@@ -50,6 +62,9 @@ export function ClosePositionModal({
   const isActive = executionState.stage !== "idle" && executionState.stage !== "done";
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
+  const maxSize = Math.abs(position.size);
+  const parsedSize = Number(sizeInput) || 0;
+  const isValidSize = parsedSize > 0 && parsedSize <= maxSize;
 
   function handleClose() {
     if (isActive) return; // don't allow closing mid-signature/submission
@@ -67,7 +82,7 @@ export function ClosePositionModal({
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-surface-2" />
 
         <div className="flex items-center justify-between">
-          <h2 className="text-[17px] font-semibold text-ink">{t("hyperliquidAccount.closePositionTitle")}</h2>
+          <h2 className="text-[17px] font-semibold text-ink">{t("hyperliquidAccount.managePositionTitle")}</h2>
           {!isActive ? (
             <button
               aria-label={t("general.close")}
@@ -92,8 +107,58 @@ export function ClosePositionModal({
           <span className="text-[15px] font-semibold text-ink">{position.coin}-PERP</span>
         </div>
 
-        <div className="mt-4 space-y-2.5 rounded-2xl border border-border p-4">
-          <Row label={t("hyperliquidAccount.closePositionSize")} value={`${formatNumber(Math.abs(position.size), 5)} ${position.coin}`} />
+        <div className="mt-4 rounded-2xl bg-surface-2 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-[13px] font-medium text-ink-muted">{t("hyperliquidAccount.closePositionSize")}</p>
+            <p className="text-[13px] text-ink-muted">
+              {t("hyperliquidAccount.closePositionMax")}: {formatNumber(maxSize, 5)} {position.coin}
+            </p>
+          </div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <input
+              type="number"
+              min={0}
+              max={maxSize}
+              step="any"
+              value={sizeInput}
+              onChange={(e) => onSizeInputChange(e.target.value)}
+              disabled={isActive || isDone}
+              placeholder="0"
+              className="w-full bg-transparent text-[24px] font-semibold text-ink outline-none disabled:opacity-60"
+              aria-label={t("hyperliquidAccount.closePositionSize")}
+            />
+            <span className="shrink-0 text-[15px] font-medium text-ink-muted">{position.coin}</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={maxSize}
+            step={maxSize > 0 ? maxSize / 1000 : 1}
+            value={Math.min(parsedSize, maxSize)}
+            onChange={(e) => onSizeInputChange(e.target.value)}
+            disabled={isActive || isDone}
+            className="mt-2 w-full accent-ink disabled:opacity-60"
+          />
+          <div className="mt-2 flex gap-1.5">
+            {CLOSE_PRESET_FRACTIONS.map((fraction) => (
+              <button
+                key={fraction}
+                type="button"
+                onClick={() => onSizeInputChange((maxSize * fraction).toString())}
+                disabled={isActive || isDone}
+                className="flex-1 rounded-full bg-surface px-2 py-1.5 text-[12px] font-medium text-ink-muted active:opacity-80 disabled:opacity-60"
+              >
+                {fraction === 1 ? t("perpTrade.maxLeverageLabel") : `${fraction * 100}%`}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-2.5 rounded-2xl border border-border p-4">
+          <Row
+            label={t("hyperliquidAccount.closePositionRemaining")}
+            value={`${formatNumber(Math.max(maxSize - Math.min(parsedSize, maxSize), 0), 5)} ${position.coin}`}
+          />
           <Row label={t("hyperliquidAccount.closePositionType")} value={t("hyperliquidAccount.closePositionMarket")} />
           <Row label={t("hyperliquidAccount.closePositionReduceOnly")} value={t("general.yes")} />
           <Row label={t("hyperliquidAccount.entryPrice")} value={position.entryPrice !== null ? formatCurrency(position.entryPrice) : "—"} />
@@ -111,7 +176,7 @@ export function ClosePositionModal({
         {!isDone ? (
           <button
             onClick={onConfirm}
-            disabled={isActive || !agentReady}
+            disabled={isActive || !agentReady || !isValidSize}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-60"
           >
             {isActive ? (

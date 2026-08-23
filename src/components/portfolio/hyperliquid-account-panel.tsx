@@ -68,15 +68,23 @@ export function HyperliquidAccountPanel() {
   const { agentStatus, agentWallet } = useHyperliquidAgent();
   const [modalOpen, setModalOpen] = useState(false);
   const [closingPosition, setClosingPosition] = useState<HyperliquidPosition | null>(null);
+  const [closeSizeInput, setCloseSizeInput] = useState("");
   const [closeExecutionState, setCloseExecutionState] = useState<CloseExecutionUiState>({ stage: "idle" });
 
   // Fetches a FRESH price/asset snapshot right before signing — same
   // stance as the trading page's handleConfirmAndSign, since that's what
-  // the closing order's slippage-bounded price is derived from. `side`/
-  // `sizeUnits` are never user-editable — always derived from the real
-  // position itself.
+  // the closing order's slippage-bounded price is derived from. Side is
+  // never user-editable (always derived from the real position); the
+  // amount IS user-editable, but clamped here to the position's own full
+  // size no matter what the input holds — 100%/Max = a full close, less
+  // than that = a partial reduce, same single action either way.
   async function handleConfirmClose() {
     if (!closingPosition || !address || !agentWallet) return;
+
+    const fullSize = Math.abs(closingPosition.size);
+    const requestedSize = Number(closeSizeInput) || 0;
+    if (requestedSize <= 0) return;
+    const sizeUnits = Math.min(requestedSize, fullSize);
 
     setCloseExecutionState({ stage: "signing" });
 
@@ -102,7 +110,7 @@ export function HyperliquidAccountPanel() {
       return;
     }
 
-    const { side, sizeUnits } = closingOrderParamsForPosition(closingPosition.size);
+    const { side } = closingOrderParamsForPosition(closingPosition.size);
     const result = await closePosition({
       wallet: agentWallet,
       address,
@@ -122,6 +130,7 @@ export function HyperliquidAccountPanel() {
 
   function handleCloseModalDismiss() {
     setClosingPosition(null);
+    setCloseSizeInput("");
     setCloseExecutionState({ stage: "idle" });
   }
 
@@ -282,11 +291,12 @@ export function HyperliquidAccountPanel() {
                   <button
                     onClick={() => {
                       setCloseExecutionState({ stage: "idle" });
+                      setCloseSizeInput(String(Math.abs(p.size)));
                       setClosingPosition(p);
                     }}
                     className="mt-2 w-full rounded-lg border border-dark-border px-3 py-1.5 text-[12px] font-medium text-dark-ink active:opacity-80"
                   >
-                    {t("hyperliquidAccount.closePosition")}
+                    {t("hyperliquidAccount.managePosition")}
                   </button>
                 </div>
               );
@@ -338,6 +348,8 @@ export function HyperliquidAccountPanel() {
     {closingPosition ? (
       <ClosePositionModal
         position={closingPosition}
+        sizeInput={closeSizeInput}
+        onSizeInputChange={setCloseSizeInput}
         agentReady={agentStatus === "approved"}
         executionState={closeExecutionState}
         onConfirm={() => void handleConfirmClose()}
