@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useSession } from "next-auth/react";
 import { getLevelInfo } from "@/lib/gamification";
-import { deriveLearningProgress } from "@/lib/learning/progress";
+import { deriveCompletedQuizzes, deriveLearningProgress } from "@/lib/learning/progress";
 import {
   getInvestmentAccess as getInvestmentAccessForStage,
   getBlockingInvestmentStage,
@@ -192,6 +192,7 @@ function useAnonymousProgress(): BaseValue {
       deriveLearningProgress({
         xp: state.xp,
         completedLessons: state.completedLessons,
+        completedQuizzes: deriveCompletedQuizzes(state),
         quizzesCompletedCount: state.quizzesCompletedCount,
         correctAnswersCount: state.correctAnswersCount,
         currentStreak: state.currentStreak,
@@ -378,6 +379,7 @@ function useAuthenticatedProgress(
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
     lastActivityAt: null,
   };
 

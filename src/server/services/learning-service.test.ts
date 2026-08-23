@@ -132,6 +132,7 @@ function progress(overrides: Partial<LearningProgress>): LearningProgress {
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
     lastActivityAt: null,
     ...overrides,
   };
@@ -176,17 +177,33 @@ describe("completeLesson — real event, deduped at the source", () => {
     expect(notifyUser).not.toHaveBeenCalled();
   });
 
-  it("a newly-unlocked investment fires investment_unlocked for that real asset", async () => {
+  it("a newly-unlocked investment fires investment_unlocked once both the lesson and quiz are done", async () => {
     getServerLearningProgress.mockResolvedValue(
-      progress({ lessonsCompleted: 1, completedLessons: ["sp500"] })
+      progress({
+        lessonsCompleted: 1,
+        completedLessons: ["sp500"],
+        // Quiz already submitted in an earlier submitQuiz() call — this
+        // completeLesson() call is what finally satisfies the last
+        // requirement, so investment_unlocked fires here.
+        completedQuizzes: ["sp500"],
+      })
     );
 
     await completeLesson("user-1", "sp500");
 
-    // sp500's own investment-unlock stage requires only its own lesson
-    // (no prerequisite asset) — completing it for the first time unlocks
-    // sp500 investing in the same call.
+    // sp500's own investment-unlock stage requires only its own lesson +
+    // quiz (no prerequisite asset) — once both are done, investing unlocks.
     expect(notifyUser).toHaveBeenCalledWith("user-1", "investment_unlocked", "sp500");
+  });
+
+  it("does NOT fire investment_unlocked from lesson completion alone — the quiz is still required (the reported bug)", async () => {
+    getServerLearningProgress.mockResolvedValue(
+      progress({ lessonsCompleted: 1, completedLessons: ["sp500"], completedQuizzes: [] })
+    );
+
+    await completeLesson("user-1", "sp500");
+
+    expect(notifyUser).not.toHaveBeenCalledWith("user-1", "investment_unlocked", "sp500");
   });
 
   it("a newly-earned achievement fires achievement_earned with a real achievement id", async () => {

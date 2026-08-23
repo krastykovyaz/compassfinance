@@ -143,6 +143,7 @@ describe("getInvestmentAccess is unaffected by HYPERLIQUID_ENABLED", () => {
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
     lastActivityAt: null,
   };
 

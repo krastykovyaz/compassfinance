@@ -197,11 +197,12 @@ export function getBlockingInvestmentStage(
 
   for (const s of chain) {
     const lessonDone = progress.completedLessons.includes(s.requiredLessonId);
+    const quizDone = progress.completedQuizzes.includes(s.requiredLessonId);
     const achievementDone = s.requiredAchievementId
       ? progress.unlockedAchievements.includes(s.requiredAchievementId)
       : true;
     const xpDone = s.requiredXP !== undefined ? progress.totalXP >= s.requiredXP : true;
-    if (!lessonDone || !achievementDone || !xpDone) return s;
+    if (!lessonDone || !quizDone || !achievementDone || !xpDone) return s;
   }
 
   // Every stage's own requirements are met but getInvestmentAccess still
@@ -242,9 +243,16 @@ export const GATED_ASSET_IDS: string[] = INVESTMENT_UNLOCK_STAGES.filter(
  * AVAILABLE — the prerequisite (if any) is satisfied, so this stage's own
  *             lesson is reachable (it always was — see learning/access.ts)
  *             and its investment requirements are startable, but not done.
- * UNLOCKED  — every requirement this stage specifies — lesson, achievement,
- *             and XP floor, whichever are set — is satisfied. The asset is
- *             investable.
+ * UNLOCKED  — every requirement this stage specifies — lesson, quiz,
+ *             achievement, and XP floor, whichever are set — is satisfied.
+ *             The asset is investable.
+ *
+ * Finishing the lesson READING alone is deliberately not enough: the quiz
+ * must also have been submitted (progress.completedQuizzes), or a learner
+ * gets investment access to an asset the instant they finish reading,
+ * before ever reaching the course's own quiz — the actual bug this check
+ * fixes. See progress-store.tsx's handleContinueLesson()/completeAssetLesson
+ * for exactly where "lesson complete" fires, well before the quiz stage.
  *
  * ALL specified requirements on a stage must hold for UNLOCKED. Evaluated
  * deterministically off the passed-in LearningProgress snapshot with no
@@ -262,12 +270,13 @@ export function getInvestmentAccess(
   if (!stage) return "LOCKED";
 
   const lessonDone = progress.completedLessons.includes(stage.requiredLessonId);
+  const quizDone = progress.completedQuizzes.includes(stage.requiredLessonId);
   const achievementDone = stage.requiredAchievementId
     ? progress.unlockedAchievements.includes(stage.requiredAchievementId)
     : true;
   const xpDone = stage.requiredXP !== undefined ? progress.totalXP >= stage.requiredXP : true;
 
-  if (lessonDone && achievementDone && xpDone) {
+  if (lessonDone && quizDone && achievementDone && xpDone) {
     return "UNLOCKED";
   }
 
@@ -283,13 +292,18 @@ export function isInvestmentUnlocked(assetId: string, progress: LearningProgress
   return getInvestmentAccess(assetId, progress) === "UNLOCKED";
 }
 
-/** The first stage whose required lesson isn't complete yet — used for the
- * /learn page's "Continue Learning" pointer. Returns null once every
- * defined stage is complete. */
+/** The first stage whose required lesson or quiz isn't complete yet — used
+ * for the /learn page's "Continue Learning" pointer. Requires the quiz too
+ * (not just the lesson reading), so a learner who finished reading but
+ * hasn't taken the quiz yet is pointed back at that same course instead of
+ * skipping ahead to the next one. Returns null once every defined stage is
+ * fully complete. */
 export function getNextInvestmentStage(progress: LearningProgress): InvestmentUnlockDefinition | null {
   return (
     INVESTMENT_UNLOCK_STAGES.find(
-      (s) => !progress.completedLessons.includes(s.requiredLessonId)
+      (s) =>
+        !progress.completedLessons.includes(s.requiredLessonId) ||
+        !progress.completedQuizzes.includes(s.requiredLessonId)
     ) ?? null
   );
 }

@@ -24,6 +24,12 @@ export type LearningProgress = {
   distinctAssetsInvested: number;
   unlockedAchievements: string[];
   completedLessons: string[];
+  /** assetIds whose quiz has been submitted at least once (pass or fail —
+   * matches AssetProgressDTO's existing "quizCompleted" meaning, i.e. an
+   * attempt, not a passing score). See unlocks.ts's getInvestmentAccess:
+   * investment access requires BOTH this and completedLessons, since
+   * finishing the lesson READING is not the same as finishing the course. */
+  completedQuizzes: string[];
   lastActivityAt: string | null; // ISO timestamp, null before any activity
 };
 

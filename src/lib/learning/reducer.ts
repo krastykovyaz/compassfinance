@@ -15,7 +15,7 @@
 
 import { XP_REWARDS } from "./xp";
 import { checkAchievements, getAchievement } from "./achievements";
-import { deriveLearningProgress, recordActivity } from "./progress";
+import { deriveCompletedQuizzes, deriveLearningProgress, recordActivity } from "./progress";
 import { AchievementDefinition } from "./types";
 import {
   AssetLessonProgress,
@@ -40,6 +40,7 @@ export function applyAchievementCheck(
   const progress = deriveLearningProgress({
     xp: s.xp,
     completedLessons: s.completedLessons,
+    completedQuizzes: deriveCompletedQuizzes(s),
     quizzesCompletedCount: s.quizzesCompletedCount,
     correctAnswersCount: s.correctAnswersCount,
     currentStreak: s.currentStreak,

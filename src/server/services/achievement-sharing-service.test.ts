@@ -41,6 +41,7 @@ function progress(overrides: Record<string, unknown> = {}) {
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
     lastActivityAt: null,
     ...overrides,
   };
@@ -59,7 +60,9 @@ describe("shareAssetUnlock — never shares a fake/unearned unlock", () => {
   });
 
   it("mints a real share token once the asset is genuinely unlocked", async () => {
-    getServerLearningProgress.mockResolvedValue(progress({ completedLessons: ["sp500", "nasdaq"] }));
+    getServerLearningProgress.mockResolvedValue(
+      progress({ completedLessons: ["sp500", "nasdaq"], completedQuizzes: ["sp500", "nasdaq"] })
+    );
     const { shareToken } = await shareAssetUnlock("user-1", "nasdaq");
     expect(shareToken).toMatch(/^[a-f0-9]{32}$/);
     expect(prismaMock.achievementShare.create).toHaveBeenCalledWith(

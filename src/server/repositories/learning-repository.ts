@@ -38,7 +38,7 @@ export async function getServerLearningProgress(userId: string): Promise<Learnin
       }),
       prisma.userQuizResult.findMany({
         where: { userId },
-        select: { score: true },
+        select: { score: true, assetId: true },
       }),
       prisma.userAchievement.findMany({ where: { userId }, select: { achievementId: true } }),
       prisma.userLearningStats.findUnique({ where: { userId } }),
@@ -48,6 +48,11 @@ export async function getServerLearningProgress(userId: string): Promise<Learnin
 
   const totalXP = xpAgg._sum.amount ?? 0;
   const completedLessons = lessons.map((l) => l.assetId);
+  // "Completed" here means submitted at least once (pass or fail) — the
+  // same meaning getAssetProgressMap's quizCompleted already uses for the
+  // per-asset resume state, so this doesn't introduce a second, competing
+  // definition of "quiz completed" alongside it.
+  const completedQuizzes = Array.from(new Set(quizzes.map((q) => q.assetId)));
   const correctAnswers = quizzes.reduce((sum, q) => sum + q.score, 0);
 
   const baseProgress: LearningProgress = {
@@ -63,6 +68,7 @@ export async function getServerLearningProgress(userId: string): Promise<Learnin
     distinctAssetsInvested,
     unlockedAchievements: [],
     completedLessons,
+    completedQuizzes,
     lastActivityAt: stats?.lastActivityAt?.toISOString() ?? null,
   };
 

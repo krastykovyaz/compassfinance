@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getLearningAccess, getAssetLearningAccess, isLearningAvailable } from "./access";
 import { getInvestmentAccess } from "./unlocks";
-import { deriveLearningProgress } from "./progress";
+import { deriveCompletedQuizzes, deriveLearningProgress } from "./progress";
 import { defaultState } from "./state";
 import { recordAssetViewReducer, completeAssetLessonReducer, completeAssetQuizReducer } from "./reducer";
 import { ASSET_LEARNING_PATH_ORDER, ALL_ASSET_LEARNING_PATHS } from "./content";
@@ -10,6 +10,7 @@ function progressFor(state: typeof defaultState) {
   return deriveLearningProgress({
     xp: state.xp,
     completedLessons: state.completedLessons,
+    completedQuizzes: deriveCompletedQuizzes(state),
     quizzesCompletedCount: state.quizzesCompletedCount,
     correctAnswersCount: state.correctAnswersCount,
     currentStreak: state.currentStreak,
@@ -60,6 +61,10 @@ describe("investment-locked asset still has learning access (test 2)", () => {
       const completed = {
         ...defaultState,
         completedLessons: [...defaultState.completedLessons, assetId],
+        assetLessonProgress: {
+          ...defaultState.assetLessonProgress,
+          [assetId]: { stepIndex: 0, lessonCompleted: true, quizAnswers: {}, quizCompleted: true },
+        },
       };
       const pCompleted = progressFor(completed);
       expect(getInvestmentAccess(assetId, pCompleted)).toBe("UNLOCKED");
