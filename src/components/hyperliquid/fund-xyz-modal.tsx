@@ -91,7 +91,7 @@ export function FundXyzModal({
   onSuccess: () => void;
 }) {
   const { t } = useTranslation();
-  const { address, getSigningProvider } = useWallet();
+  const { address, chainId: walletChainId, getSigningProvider } = useWallet();
   const [amountInput, setAmountInput] = useState("");
   const [executionState, setExecutionState] = useState<TransferUiState>({ stage: "idle" });
 
@@ -146,6 +146,7 @@ export function FundXyzModal({
       amountUsdc: amountInput,
       usdcTokenId,
       isTestnet,
+      walletChainId,
     });
 
     setExecutionState({ stage: "done", result });

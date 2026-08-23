@@ -92,6 +92,14 @@ export type HyperliquidRawUniverseEntry = {
   name: string;
   szDecimals: number;
   maxLeverage: number;
+  /** True when Hyperliquid has delisted this specific market — verified
+   * live, real for some HIP-3 testnet markets (e.g. xyz:SP500 was
+   * delisted on testnet while fully live on mainnet) even though the
+   * name still appears in `meta`. Optional/undefined on raw responses
+   * that don't include it (the field simply isn't present rather than
+   * false), so callers must treat undefined the same as false — never
+   * assume "present and false" vs "absent" means anything different. */
+  isDelisted?: boolean;
 };
 
 export type HyperliquidRawMeta = {

@@ -24,6 +24,7 @@ import {
   buildApproveAgentAction,
   approveAgent,
   correctWalletConnectChainIdIfDesynced,
+  preferredApprovedChain,
 } from "./hyperliquid-agent-wallet";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
 
@@ -194,6 +195,56 @@ describe("correctWalletConnectChainIdIfDesynced", () => {
   // the outer property (as an earlier version of this fix did) left
   // eth_chainId still reporting the stale/bad value live — this is the
   // regression test for that.
+  // Real, reproduced bug (2026-08-23): a user got "active chainId is
+  // different than the one provided" straight back from their wallet.
+  // Root cause: preferredApprovedChain used to ALWAYS guess (prefer
+  // 42161, else the first approved chain) with no way to check that
+  // guess against the wallet's real active chain — a session commonly
+  // approves several chains at pairing time, and "approved at some
+  // point" isn't "active right now". These tests cover the fix: an
+  // actualChainId hint (wallet-provider.tsx's live-tracked
+  // WalletState.chainId) wins outright whenever the session actually
+  // approved it, instead of being ignored in favor of the guess.
+  describe("preferredApprovedChain — actualChainId hint (the 2026-08-23 fix)", () => {
+    it("prefers actualChainId over the 42161-first heuristic when the session approved it", () => {
+      const chains = ["eip155:1", "eip155:10", "eip155:42161"];
+      expect(preferredApprovedChain(chains, 10)).toBe(10);
+    });
+
+    it("falls back to the guess when actualChainId isn't in the approved list at all", () => {
+      const chains = ["eip155:1", "eip155:42161"];
+      expect(preferredApprovedChain(chains, 137)).toBe(42161);
+    });
+
+    it("falls back to the guess when actualChainId is omitted or null", () => {
+      const chains = ["eip155:1", "eip155:42161"];
+      expect(preferredApprovedChain(chains)).toBe(42161);
+      expect(preferredApprovedChain(chains, null)).toBe(42161);
+    });
+
+    it("actualChainId still wins even when it differs from the usual 42161 preference", () => {
+      // The exact shape of the real bug: 42161 IS approved, but the
+      // wallet's real active chain is something else in the same
+      // approved set — must not force 42161 anyway.
+      const chains = ["eip155:1", "eip155:42161"];
+      expect(preferredApprovedChain(chains, 1)).toBe(1);
+    });
+  });
+
+  it("correctWalletConnectChainIdIfDesynced corrects to the actualChainId hint, not the 42161 guess, when it's approved", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 270689, // desynced garbage value
+      session: { namespaces: { eip155: { chains: ["eip155:1", "eip155:42161"] } } },
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider, 1);
+
+    expect((provider as unknown as { chainId: number }).chainId).toBe(1);
+  });
+
   it("also corrects the deeper signer.rpcProviders.eip155.chainId that eth_chainId is actually answered from", () => {
     const provider = {
       request: vi.fn(),
@@ -265,6 +316,35 @@ describe("approveAgent — orchestration", () => {
     } as unknown as Eip1193Provider;
 
     await approveAgent({ provider: wcProvider, address: "0xuser", agentAddress: "0xagent", isTestnet: false });
+
+    expect(getChainId).not.toHaveBeenCalled();
+    const signedAction = signUserSignedAction.mock.calls[0][0].action;
+    expect(signedAction.signatureChainId).toBe("0xa4b1");
+  });
+
+  it("prefers a passed-in walletChainId over the WC session's approved-list guess — the 2026-08-23 fix", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const wcProvider = {
+      ...mockProvider(),
+      session: { namespaces: { eip155: { chains: ["eip155:1", "eip155:42161"] } } },
+    } as unknown as Eip1193Provider;
+
+    // 42161 IS approved and would normally be the guessed preference —
+    // but the wallet's real active chain (walletChainId) is 1, and that
+    // must win.
+    await approveAgent({ provider: wcProvider, address: "0xuser", agentAddress: "0xagent", isTestnet: false, walletChainId: 1 });
+
+    expect(getChainId).not.toHaveBeenCalled();
+    const signedAction = signUserSignedAction.mock.calls[0][0].action;
+    expect(signedAction.signatureChainId).toBe("0x1");
+  });
+
+  it("never calls the live getChainId() round trip when walletChainId is provided, even for an injected (non-WC) provider", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    await approveAgent({ provider: mockProvider(), address: "0xuser", agentAddress: "0xagent", isTestnet: false, walletChainId: 42161 });
 
     expect(getChainId).not.toHaveBeenCalled();
     const signedAction = signUserSignedAction.mock.calls[0][0].action;

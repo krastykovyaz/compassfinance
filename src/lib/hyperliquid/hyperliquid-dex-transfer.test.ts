@@ -232,4 +232,21 @@ describe("signAndSubmitDexTransfer — orchestration", () => {
 
     expect(getChainId).not.toHaveBeenCalled();
   });
+
+  // Real, reproduced bug (2026-08-23) — see hyperliquid-agent-wallet.ts's
+  // preferredApprovedChain for the full root cause. This flow duplicates
+  // that same chain-selection logic, so it needs the same fix.
+  it("prefers a passed-in walletChainId over the WC session's approved-list guess", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const wcProvider = {
+      ...mockProvider(),
+      session: { namespaces: { eip155: { chains: ["eip155:1", "eip155:42161"] } } },
+    } as unknown as Eip1193Provider;
+
+    await signAndSubmitDexTransfer({ provider: wcProvider, ...BASE_PARAMS, walletChainId: 1 });
+
+    const signedAction = signUserSignedAction.mock.calls[0][0].action;
+    expect(signedAction.signatureChainId).toBe("0x1");
+  });
 });

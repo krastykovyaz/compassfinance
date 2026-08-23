@@ -33,7 +33,14 @@ export type HyperliquidAgentContextValue = {
   /** The agent's own local signer, ready to hand to signAndSubmitPerpOrder —
    * only non-null once agentStatus is "approved". */
   agentWallet: AbstractWallet | null;
-  approve: (params: { provider: Eip1193Provider; address: string; isTestnet: boolean }) => Promise<void>;
+  approve: (params: {
+    provider: Eip1193Provider;
+    address: string;
+    isTestnet: boolean;
+    /** wallet-provider.tsx's live-tracked WalletState.chainId — see
+     * preferredApprovedChain's comment in hyperliquid-agent-wallet.ts. */
+    walletChainId?: number | null;
+  }) => Promise<void>;
   reset: () => void;
 };
 
@@ -81,7 +88,7 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
   }, [connectedAddress, reset]);
 
   const approve = useCallback(
-    async (params: { provider: Eip1193Provider; address: string; isTestnet: boolean }) => {
+    async (params: { provider: Eip1193Provider; address: string; isTestnet: boolean; walletChainId?: number | null }) => {
       const generation = addressGenerationRef.current;
       setAgentStatus("approving");
       setErrorMessage(null);
@@ -92,6 +99,7 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
         address: params.address,
         agentAddress: keypair.address,
         isTestnet: params.isTestnet,
+        walletChainId: params.walletChainId,
       });
 
       // The connected address changed while this approval was in flight

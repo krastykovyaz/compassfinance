@@ -72,7 +72,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { t } = useTranslation();
 
   const { status: sessionStatus } = useSession();
-  const { status: walletStatus, address, isConnecting, getSigningProvider } = useWallet();
+  const { status: walletStatus, address, chainId: walletChainId, isConnecting, getSigningProvider } = useWallet();
   const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
   const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   const { markets } = useHyperliquidMarkets();
@@ -229,7 +229,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       // mainnet's hyperliquidChain classification if this fetch failed.
     }
 
-    await approveAgent({ provider, address, isTestnet });
+    await approveAgent({ provider, address, isTestnet, walletChainId });
   }
 
   function handleClosePreview() {

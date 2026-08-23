@@ -271,6 +271,38 @@ describe("getHyperliquidMarkets — HIP-3 merge (Phase 8)", () => {
     }
   });
 
+  // Real, reproduced bug (2026-08-23): xyz:SP500 and xyz:BRENTOIL are
+  // delisted on Hyperliquid TESTNET specifically (verified live) even
+  // though their names still appear in meta and they're fully live on
+  // mainnet — the UI showed a stale price with a "no candles available"
+  // chart error and let the user proceed toward real trading an asset
+  // with zero actual market behind it.
+  it("excludes a delisted xyz market even though its name still appears in meta — no stale/fake price shown", async () => {
+    fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
+      dex === "xyz"
+        ? {
+            ok: true,
+            data: [
+              {
+                universe: [
+                  { name: "xyz:AAPL", szDecimals: 3, maxLeverage: 20 },
+                  { name: "xyz:SP500", szDecimals: 3, maxLeverage: 50, isDelisted: true },
+                ],
+              },
+              [RAW_XYZ_ASSET_CTXS[0], { ...RAW_XYZ_ASSET_CTXS[0], markPx: "7672.8" }],
+            ],
+          }
+        : { ok: true, data: [RAW_META, RAW_ASSET_CTXS] }
+    );
+
+    const result = await getHyperliquidMarkets();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.markets.map((m) => m.assetId).sort()).toEqual(["BTC", "ETH", "xyz:AAPL"]);
+    }
+  });
+
   it("a native-dex failure still fails the whole call, exactly as before Phase 8", async () => {
     fetchMetaAndAssetCtxs.mockImplementation(async (dex?: string) =>
       dex === "xyz"

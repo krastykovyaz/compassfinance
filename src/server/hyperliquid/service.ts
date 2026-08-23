@@ -107,6 +107,13 @@ async function buildDexMarketSnapshots(
     const catalogEntry = getAsset(compassAssetId);
     if (!catalogEntry) continue; // defensive — mapping should never point at a missing catalog entry
 
+    // A delisted market has no live oracle/trading activity even though
+    // its name still appears in meta — verified live (xyz:SP500 and
+    // xyz:BRENTOIL are both delisted on testnet, though fully live on
+    // mainnet). Showing it as tradeable would be a stale/fake price with
+    // no real market behind it, exactly what this app never does.
+    if (meta.universe[i].isDelisted) continue;
+
     const maxLeverage = meta.universe[i].maxLeverage;
     const szDecimals = meta.universe[i].szDecimals;
     const ctx = assetCtxs[i];

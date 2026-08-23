@@ -121,19 +121,39 @@ export function walletConnectApprovedChains(provider: Eip1193Provider): string[]
   return chains && chains.length > 0 ? chains : null;
 }
 
-/** Prefer Arbitrum One (this app's primary chain) if it's approved;
- * otherwise whichever approved chain comes first — either way, only
- * ever a chain the session itself actually approved. */
-export function preferredApprovedChain(chains: string[]): number {
+/** Real, reproduced bug (2026-08-23): a user got
+ * `"active chainId is different than the one provided"` straight back
+ * from their wallet. Root cause — this function used to ALWAYS guess
+ * (prefer Arbitrum One, else whichever chain came first in the
+ * session's approved list) with no way to check that guess against the
+ * wallet's REAL active chain. A session commonly approves several chains
+ * at pairing time (this app requests optionalChains = every chain in
+ * SUPPORTED_CHAINS); "approved at some point" is not the same as
+ * "active right now", and picking the wrong one from an otherwise-valid
+ * approved list produces exactly this mismatch — a DIFFERENT failure
+ * mode from the earlier-fixed one below, where the approved list agreed
+ * with reality and only the SDK's own internal pointer was corrupted.
+ *
+ * `actualChainId` is wallet-provider.tsx's live-tracked WalletState.chainId
+ * — captured at connect and kept fresh via a real chainChanged
+ * subscription, so using it here is NOT a fresh RPC round trip (the thing
+ * proven unsafe for WalletConnect below) — just reading already-held
+ * React state. When it's present AND the session actually approved it,
+ * it wins outright over the guess; the guess remains the fallback for
+ * the rare case this value isn't available yet. */
+export function preferredApprovedChain(chains: string[], actualChainId?: number | null): number {
+  if (actualChainId != null && chains.includes(`eip155:${actualChainId}`)) {
+    return actualChainId;
+  }
   const preferred = chains.find((c) => c === "eip155:42161") ?? chains[0];
   return Number(preferred.split(":")[1]);
 }
 
-export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider): void {
+export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider, actualChainId?: number | null): void {
   const chains = walletConnectApprovedChains(provider);
   if (!chains) return; // not WalletConnect, or no session yet
 
-  const corrected = preferredApprovedChain(chains);
+  const corrected = preferredApprovedChain(chains, actualChainId);
   if (!Number.isFinite(corrected)) return;
 
   const wc = provider as unknown as WalletConnectInternals;
@@ -156,6 +176,12 @@ export async function approveAgent(params: {
   address: string;
   agentAddress: `0x${string}`;
   isTestnet: boolean;
+  /** wallet-provider.tsx's live-tracked WalletState.chainId — pass this
+   * whenever it's available (it should be, once connected). See
+   * preferredApprovedChain's comment: this is what makes the choice a
+   * real fact about the wallet instead of a guess from its approved
+   * list, without doing a fresh RPC round trip. */
+  walletChainId?: number | null;
 }): Promise<ApproveAgentResult> {
   const wallet = createHyperliquidWalletAdapter(params.provider, params.address);
 
@@ -164,9 +190,13 @@ export async function approveAgent(params: {
   // That round trip was found to re-trigger the same live desync it was
   // meant to detect, undoing any earlier correction before the sign call
   // even happens. The injected-wallet path (no session) is unaffected by
-  // any of this and keeps using the real live value.
+  // any of this and keeps using the real live value. Either way,
+  // walletChainId (when available) is preferred over the guess — see
+  // preferredApprovedChain.
   const wcChains = walletConnectApprovedChains(params.provider);
-  const chainId = wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider);
+  const chainId =
+    params.walletChainId ??
+    (wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider));
   const nonce = nextNonce();
 
   const action = buildApproveAgentAction({
@@ -181,7 +211,7 @@ export async function approveAgent(params: {
   // with nothing async in between — so nothing has a chance to
   // re-corrupt the SDK's own internal chainId (used to scope the relayed
   // signing request itself) between correcting it and using it.
-  correctWalletConnectChainIdIfDesynced(params.provider);
+  correctWalletConnectChainIdIfDesynced(params.provider, params.walletChainId);
 
   let signature: HyperliquidSignature;
   try {

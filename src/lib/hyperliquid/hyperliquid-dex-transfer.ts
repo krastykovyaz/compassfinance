@@ -81,6 +81,10 @@ export async function signAndSubmitDexTransfer(params: {
   amountUsdc: string;
   usdcTokenId: string;
   isTestnet: boolean;
+  /** wallet-provider.tsx's live-tracked WalletState.chainId — see
+   * preferredApprovedChain's comment in hyperliquid-agent-wallet.ts for
+   * why this is preferred over guessing from the approved chain list. */
+  walletChainId?: number | null;
 }): Promise<DexTransferResult> {
   const wallet = createHyperliquidWalletAdapter(params.provider, params.address);
 
@@ -88,7 +92,9 @@ export async function signAndSubmitDexTransfer(params: {
   // signature in this integration needs — see hyperliquid-agent-wallet.ts
   // for the full reasoning.
   const wcChains = walletConnectApprovedChains(params.provider);
-  const chainId = wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider);
+  const chainId =
+    params.walletChainId ??
+    (wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider));
   const nonce = nextNonce();
 
   const action = buildSendAssetAction({
@@ -102,7 +108,7 @@ export async function signAndSubmitDexTransfer(params: {
     nonce,
   });
 
-  correctWalletConnectChainIdIfDesynced(params.provider);
+  correctWalletConnectChainIdIfDesynced(params.provider, params.walletChainId);
 
   let signature: HyperliquidSignature;
   try {
