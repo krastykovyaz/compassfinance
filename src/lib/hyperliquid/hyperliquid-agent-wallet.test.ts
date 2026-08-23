@@ -23,6 +23,7 @@ import {
   createAgentSigner,
   buildApproveAgentAction,
   approveAgent,
+  correctWalletConnectChainIdIfDesynced,
 } from "./hyperliquid-agent-wallet";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
 
@@ -108,6 +109,82 @@ describe("buildApproveAgentAction — pure builder", () => {
     expect(onArbitrum.signatureChainId).toBe("0xa4b1");
     expect(onSepolia.signatureChainId).toBe("0xaa36a7");
     expect(onArbitrum.signatureChainId).not.toBe("0x539"); // never the fixed L1-action value (1337)
+  });
+});
+
+// Regression coverage for a verified real-world bug in
+// @walletconnect/ethereum-provider: its own internal chainId can desync
+// from the session it correctly negotiated. Reproduced live — a real
+// wallet's session.namespaces.eip155.chains correctly listed the
+// connected wallet's real active chain (Arbitrum, 42161) among 5
+// approved chains, but the provider's own internal chainId was a value
+// entirely outside that approved set.
+describe("correctWalletConnectChainIdIfDesynced", () => {
+  it("is a no-op for a non-WalletConnect (e.g. injected) provider — no session property at all", () => {
+    const provider = { request: vi.fn(), on: vi.fn(), removeListener: vi.fn() } as unknown as Eip1193Provider;
+    expect(() => correctWalletConnectChainIdIfDesynced(provider)).not.toThrow();
+    expect((provider as unknown as { chainId?: number }).chainId).toBeUndefined();
+  });
+
+  it("is a no-op when the internal chainId already agrees with its own approved session", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 42161,
+      session: { namespaces: { eip155: { chains: ["eip155:1", "eip155:42161"] } } },
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider);
+
+    expect((provider as unknown as { chainId: number }).chainId).toBe(42161);
+  });
+
+  it("corrects a desynced chainId to Arbitrum One when it's among the approved chains — the exact reproduced bug", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 270689, // the exact bad value reproduced live — not in the approved set below
+      session: {
+        namespaces: { eip155: { chains: ["eip155:1", "eip155:10", "eip155:137", "eip155:8453", "eip155:42161"] } },
+      },
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider);
+
+    expect((provider as unknown as { chainId: number }).chainId).toBe(42161);
+  });
+
+  it("falls back to the first approved chain when Arbitrum isn't among them", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 999999,
+      session: { namespaces: { eip155: { chains: ["eip155:1", "eip155:8453"] } } },
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider);
+
+    expect((provider as unknown as { chainId: number }).chainId).toBe(1);
+  });
+
+  it("never corrects to a chain the session didn't actually approve", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 270689,
+      session: { namespaces: { eip155: { chains: ["eip155:8453"] } } },
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider);
+
+    const corrected = (provider as unknown as { chainId: number }).chainId;
+    expect(corrected).toBe(8453);
+    expect(corrected).not.toBe(270689);
+    expect(corrected).not.toBe(42161); // wasn't approved here — never invented
   });
 });
 

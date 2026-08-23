@@ -79,6 +79,42 @@ export function buildApproveAgentAction(params: {
 
 export type ApproveAgentResult = { status: "wallet-rejected" } | HyperliquidExchangeResult;
 
+/** WORKAROUND for a verified bug in @walletconnect/ethereum-provider (the
+ * installed version at time of writing: 2.23.10). Reproduced live and
+ * confirmed from the SDK's own source: it tracks an internal `chainId`
+ * separate from the session it negotiates, and uses that internal value
+ * to scope every relayed request — including the actual signing request,
+ * not just anything CompassFinance puts in a payload. On a real wallet,
+ * that internal value was found stuck at a number OUTSIDE the session's
+ * own approved chain list entirely, while the session itself correctly
+ * listed the wallet's real active chain (confirmed independently by the
+ * wallet's own UI) among its approved chains. There is no supported API
+ * to fix this from outside the SDK — this directly corrects the internal
+ * property, which is not part of the public Eip1193Provider contract, so
+ * it's narrowly scoped to exactly this one desync condition and left
+ * heavily commented. Remove if a future SDK release fixes this upstream.
+ * A no-op for the common case (injected wallets, or a WalletConnect
+ * session whose internal state already agrees with its own session). */
+export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider): void {
+  const wc = provider as unknown as {
+    session?: { namespaces?: Record<string, { chains?: string[] }> };
+    chainId?: number;
+  };
+  const chains = wc.session?.namespaces?.eip155?.chains;
+  if (!chains || chains.length === 0) return; // not WalletConnect, or no session yet
+
+  if (wc.chainId !== undefined && chains.includes(`eip155:${wc.chainId}`)) return; // already consistent
+
+  // Prefer Arbitrum One (this app's primary chain) if it's approved;
+  // otherwise fall back to whichever approved chain comes first — either
+  // way, only ever a chain the session itself already approved.
+  const preferred = chains.find((c) => c === "eip155:42161") ?? chains[0];
+  const corrected = Number(preferred.split(":")[1]);
+  if (Number.isFinite(corrected)) {
+    wc.chainId = corrected;
+  }
+}
+
 /** Signs (with the user's REAL wallet — this is the only step that ever
  * pops it for the agent flow) and submits the one-time approveAgent
  * action, through the existing generic /api/hyperliquid/order route —
@@ -90,6 +126,7 @@ export async function approveAgent(params: {
   agentAddress: `0x${string}`;
   isTestnet: boolean;
 }): Promise<ApproveAgentResult> {
+  correctWalletConnectChainIdIfDesynced(params.provider);
   const wallet = createHyperliquidWalletAdapter(params.provider, params.address);
   const chainId = await getChainId(params.provider);
   const nonce = nextNonce();
