@@ -758,4 +758,95 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
 
     expect(result).toEqual({ status: "network-failure", message: "timed out" });
   });
+
+  describe("approveAgent (Phase 5) — no asset/leverage/balance concept, relays straight through", () => {
+    const APPROVE_AGENT_ACTION = {
+      type: "approveAgent",
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      agentAddress: "0xagent",
+      agentName: "CompassFinance",
+      nonce: NONCE,
+    };
+
+    it("skips the asset/universe lookup entirely — never calls fetchMeta or fetchClearinghouseState", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
+
+      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "pending" });
+      expect(fetchMeta).not.toHaveBeenCalled();
+      expect(fetchClearinghouseState).not.toHaveBeenCalled();
+    });
+
+    it("forwards the action byte-identical to postExchange, same as every other action type", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
+
+      await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+
+      expect(postExchange).toHaveBeenCalledWith({ action: APPROVE_AGENT_ACTION, nonce: NONCE, signature: SIGNATURE });
+      expect(postExchange.mock.calls[0][0].action).toBe(APPROVE_AGENT_ACTION);
+    });
+
+    it("still returns rejected/disabled when the flag is off — the top-level gate applies to every action type", async () => {
+      process.env.HYPERLIQUID_ENABLED = "false";
+
+      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "disabled", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("classifies a Hyperliquid-side rejection of the approval the same as any other action", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "err", response: "Invalid signature" } });
+
+      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "hyperliquid-rejected", message: "Invalid signature" });
+    });
+  });
+
+  describe("order pre-flight balance check — Unified Account Mode override (connected bugfix)", () => {
+    // Without this, a real Unified Account wallet's classic (stale, always
+    // $0 per Hyperliquid's own docs) clearinghouseState balance would
+    // wrongly reject a real, adequately-funded order — the agent would
+    // sign successfully and then the server would reject it anyway.
+    it("uses the real spot balance instead of the stale classic $0 when the account is unified", async () => {
+      mockAccountBalance("0"); // classic clearinghouseState: stale $0, as confirmed on the real reported wallet
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "999.0", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "999.0"]],
+        },
+      });
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+      // 0.01 BTC @ $60000 = $600 notional; BTC max leverage 50x -> needs
+      // >= $12 real balance. Classic $0 would reject this; the real $999
+      // spot balance should allow it through to postExchange.
+      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result.status).not.toBe("rejected");
+      expect(postExchange).toHaveBeenCalled();
+    });
+
+    it("still rejects for a genuinely underfunded unified account — the override isn't a bypass", async () => {
+      mockAccountBalance("100000"); // classic value would (wrongly) pass — proves the override, not the classic value, decided this
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "1.0", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "1.0"]],
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+  });
 });

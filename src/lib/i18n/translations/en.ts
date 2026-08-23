@@ -332,6 +332,9 @@ const en = {
     orderFilled: "Order filled",
     orderSubmitted: "Order submitted",
     unconfirmed: "Couldn't confirm this reached Hyperliquid — check your positions before trying again.",
+    approveAgentTitle: "Approve Hyperliquid Trading",
+    approveAgentSubtitle: "One-time approval in your wallet — future trades this session won't need a wallet signature each time.",
+    approveAgentButton: "Approve Trading",
   },
   linkRows: {
     trustedSources: "Trusted sources",

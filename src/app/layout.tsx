@@ -10,6 +10,7 @@ import { FavoritesProvider } from "@/lib/favorites/favorites-provider";
 import { NotificationsProvider } from "@/lib/notifications/notifications-provider";
 import { PaperAccountProvider } from "@/lib/trading/paper-account-provider";
 import { HyperliquidAccountProvider } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { HyperliquidAgentProvider } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://compassfinance.online"),
@@ -37,7 +38,9 @@ export default function RootLayout({
                       <NotificationsProvider>
                         <PaperAccountProvider>
                           <HyperliquidAccountProvider>
-                            <ProgressProvider>{children}</ProgressProvider>
+                            <HyperliquidAgentProvider>
+                              <ProgressProvider>{children}</ProgressProvider>
+                            </HyperliquidAgentProvider>
                           </HyperliquidAccountProvider>
                         </PaperAccountProvider>
                       </NotificationsProvider>

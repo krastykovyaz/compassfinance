@@ -245,6 +245,34 @@ function normalizePosition(raw: HyperliquidRawPosition): HyperliquidPosition | n
   return { coin: raw.coin, size, entryPrice, leverage, liquidationPrice, unrealizedPnl, marginUsed, positionValue };
 }
 
+/** Unified Account Mode (a setting the user enables in Hyperliquid's own
+ * app) makes the classic clearinghouseState balance/withdrawable figures
+ * stale/not meaningful — real collateral lives in the spot clearinghouse
+ * state instead. Detects it and, when present, returns the real
+ * accountValue/withdrawableBalance to use instead; returns null (not
+ * unified, or detection/lookup failed) when the caller should keep
+ * whatever classic clearinghouseState values it already has. Shared by
+ * getHyperliquidAccount (cached) and submitHyperliquidExchangeAction's
+ * pre-flight balance check (deliberately uncached) — same override,
+ * two different staleness requirements. */
+async function getUnifiedAccountOverride(
+  address: string
+): Promise<{ accountValue: number; withdrawableBalance: number } | null> {
+  const abstraction = await fetchUserAbstraction(address);
+  if (!abstraction.ok || abstraction.data !== "unifiedAccount") return null;
+
+  const spot = await fetchSpotClearinghouseState(address);
+  if (!spot.ok) return null;
+
+  const usdc = spot.data.balances.find((b) => b.coin === "USDC");
+  const usdcTotal = usdc ? toNumber(usdc.total) : NaN;
+  if (!usdc || Number.isNaN(usdcTotal)) return null;
+
+  const availableEntry = spot.data.tokenToAvailableAfterMaintenance?.find(([token]) => token === usdc.token);
+  const available = availableEntry ? toNumber(availableEntry[1]) : NaN;
+  return { accountValue: usdcTotal, withdrawableBalance: Number.isNaN(available) ? usdcTotal : available };
+}
+
 export async function getHyperliquidAccount(address: string): Promise<HyperliquidAccountResult> {
   if (!address || !address.trim()) {
     return { status: "unavailable", reason: "address is required" };
@@ -264,29 +292,13 @@ export async function getHyperliquidAccount(address: string): Promise<Hyperliqui
       let withdrawableBalance = toNumber(fetched.data.withdrawable);
       const totalMarginUsed = toNumber(fetched.data.marginSummary.totalMarginUsed);
 
-      // Unified Account Mode (a setting the user enables in Hyperliquid's
-      // own app) makes the classic clearinghouseState balance/withdrawable
-      // figures above stale/not meaningful — real collateral lives in the
-      // spot clearinghouse state instead. Detect it and, when present,
-      // override with the real numbers. A failed detection/spot lookup
-      // falls back to the classic values already computed above rather
-      // than failing the whole account view — this override is additive,
-      // never the only source of truth for a request.
-      const abstraction = await fetchUserAbstraction(address);
-      if (abstraction.ok && abstraction.data === "unifiedAccount") {
-        const spot = await fetchSpotClearinghouseState(address);
-        if (spot.ok) {
-          const usdc = spot.data.balances.find((b) => b.coin === "USDC");
-          const usdcTotal = usdc ? toNumber(usdc.total) : NaN;
-          if (!Number.isNaN(usdcTotal)) {
-            accountValue = usdcTotal;
-            const availableEntry = spot.data.tokenToAvailableAfterMaintenance?.find(
-              ([token]) => token === usdc!.token
-            );
-            const available = availableEntry ? toNumber(availableEntry[1]) : NaN;
-            withdrawableBalance = Number.isNaN(available) ? usdcTotal : available;
-          }
-        }
+      // A failed detection/spot lookup falls back to the classic values
+      // already computed above rather than failing the whole account
+      // view — this override is additive, never the only source of truth.
+      const override = await getUnifiedAccountOverride(address);
+      if (override) {
+        accountValue = override.accountValue;
+        withdrawableBalance = override.withdrawableBalance;
       }
 
       if ([accountValue, withdrawableBalance, totalMarginUsed].some(Number.isNaN)) {
@@ -390,7 +402,7 @@ export async function getHyperliquidUserFills(address: string, limit = 20): Prom
 // and classify Hyperliquid's real response. Never wrapped in getOrFetch —
 // a write must never be cached or deduplicated. ---
 
-const EXCHANGE_ACTION_TYPES: HyperliquidExchangeActionType[] = ["updateLeverage", "order"];
+const EXCHANGE_ACTION_TYPES: HyperliquidExchangeActionType[] = ["updateLeverage", "order", "approveAgent"];
 
 function isValidExchangeActionType(value: unknown): value is HyperliquidExchangeActionType {
   return typeof value === "string" && (EXCHANGE_ACTION_TYPES as string[]).includes(value);
@@ -496,6 +508,22 @@ export async function submitHyperliquidExchangeAction(
     return { status: "rejected", reason: "unknown-action-type", message: "Unsupported action type" };
   }
 
+  // approveAgent (Phase 5) has no asset/leverage/balance concept at all —
+  // it's a one-time delegation grant, not a trade — so it skips every
+  // check below and relays straight through.
+  if (action.type === "approveAgent") {
+    try {
+      const result = await postExchange<unknown>({ action, nonce, signature });
+      if (!result.ok) {
+        return { status: "network-failure", message: result.message };
+      }
+      return classifyExchangeResponse(result.data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
+      return { status: "network-failure", message };
+    }
+  }
+
   const assetIndex = extractAssetIndex(action);
   if (assetIndex === null) {
     return { status: "rejected", reason: "invalid-request", message: "Missing or invalid asset reference" };
@@ -538,7 +566,12 @@ export async function submitHyperliquidExchangeAction(
     if (!fresh.ok) {
       return { status: "rejected", reason: "invalid-request", message: "Couldn't verify account balance" };
     }
-    const withdrawable = toNumber(fresh.data.withdrawable);
+    let withdrawable = toNumber(fresh.data.withdrawable);
+    // Same Unified Account Mode override getHyperliquidAccount applies —
+    // without it, a unified wallet's classic (stale) $0 would wrongly
+    // reject a real, adequately-funded order.
+    const override = await getUnifiedAccountOverride(address);
+    if (override) withdrawable = override.withdrawableBalance;
     if (!Number.isNaN(withdrawable) && notional > withdrawable * asset.maxLeverage) {
       return {
         status: "rejected",

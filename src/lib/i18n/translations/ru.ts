@@ -329,6 +329,9 @@ const ru: Dictionary = {
     orderFilled: "Ордер исполнен",
     orderSubmitted: "Ордер отправлен",
     unconfirmed: "Не удалось подтвердить отправку в Hyperliquid — проверьте свои позиции, прежде чем повторить попытку.",
+    approveAgentTitle: "Разрешить торговлю на Hyperliquid",
+    approveAgentSubtitle: "Разовое разрешение в кошельке — дальнейшие сделки в этой сессии не потребуют подписи кошельком каждый раз.",
+    approveAgentButton: "Разрешить торговлю",
   },
   linkRows: {
     trustedSources: "Надёжные источники",

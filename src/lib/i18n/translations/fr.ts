@@ -329,6 +329,9 @@ const fr: Dictionary = {
     orderFilled: "Ordre exécuté",
     orderSubmitted: "Ordre soumis",
     unconfirmed: "Impossible de confirmer que ceci a atteint Hyperliquid — vérifiez vos positions avant de réessayer.",
+    approveAgentTitle: "Autoriser le trading Hyperliquid",
+    approveAgentSubtitle: "Autorisation unique dans votre portefeuille — les prochaines transactions de cette session n'auront plus besoin d'une signature à chaque fois.",
+    approveAgentButton: "Autoriser le trading",
   },
   linkRows: {
     trustedSources: "Sources de confiance",

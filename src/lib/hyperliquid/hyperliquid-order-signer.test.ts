@@ -204,7 +204,7 @@ describe("createHyperliquidWalletAdapter", () => {
 
 describe("signAndSubmitPerpOrder — orchestration", () => {
   const BASE_PARAMS = {
-    provider: mockProvider(),
+    wallet: createHyperliquidWalletAdapter(mockProvider(), "0xabc"),
     address: "0xabc",
     assetIndex: 0,
     szDecimals: 5,
@@ -235,6 +235,20 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
     expect(leverageCall.action.type).toBe("updateLeverage");
     expect(orderCall.action.type).toBe("order");
     expect(orderCall.nonce).toBeGreaterThan(leverageCall.nonce);
+    expect(result).toEqual({ status: "resting", orderId: 1 });
+  });
+
+  it("is signer-agnostic — works identically given any AbstractWallet-shaped signer, not just the browser-wallet adapter (Phase 5: an agent's local account passes the same way)", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "resting", orderId: 1 } })));
+    const localAccountShapedSigner = {
+      signTypedData: vi.fn(async (): Promise<`0x${string}`> => "0xsig"),
+      address: "0xagent" as `0x${string}`,
+    };
+
+    const result = await signAndSubmitPerpOrder({ ...BASE_PARAMS, wallet: localAccountShapedSigner });
+
+    expect(signL1Action.mock.calls[0][0].wallet).toBe(localAccountShapedSigner);
     expect(result).toEqual({ status: "resting", orderId: 1 });
   });
 

@@ -1,13 +1,16 @@
 "use client";
 
 // Hyperliquid Trading — Phase 3 built the order PREVIEW; Phase 4 added
-// real signed order execution on top of it. Reuses the existing wallet
-// (useWallet) and Hyperliquid account (useHyperliquidAccount) state
-// exactly as Phase 2 built them — no new wallet/account state anywhere in
-// this file. Signing happens entirely inside the connected wallet
-// (hyperliquid-order-signer.ts); this page never touches a private key,
-// it only calls getSigningProvider() (already exposed on useWallet()) and
-// hands it to the signer. The simulated/practice investing system
+// real signed order execution; Phase 5 added the one-time agent-wallet
+// approval this page gates on before showing the trading form (see
+// hyperliquid-agent-wallet.ts for why: Hyperliquid's L1 trading actions
+// sign with a fixed chainId some wallets reject as a mismatch — the
+// approveAgent step, still signed by the REAL connected wallet via
+// getSigningProvider(), uses a different signing scheme that doesn't have
+// that problem, and delegates every later trade to a session-only agent
+// key this page never persists). This page never touches a private key
+// itself either way — it only ever hands a signer object to
+// hyperliquid-order-signer.ts. The simulated/practice investing system
 // (src/lib/trading/) is never imported here — this trades against the
 // real, connected Hyperliquid account, a completely separate system by
 // design (see the Hyperliquid-integration isolation tests).
@@ -23,6 +26,7 @@ import { WalletConnectModal } from "@/components/wallet/wallet-connect-modal";
 import { PerpOrderPreviewSheet, type PerpOrderExecutionUiState } from "@/components/hyperliquid/perp-order-preview-sheet";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { useHyperliquidAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
+import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
 import { resolveHyperliquidPanelView } from "@/components/portfolio/hyperliquid-account-panel";
 import { getHyperliquidCoinForAsset } from "@/lib/hyperliquid/asset-mapping";
@@ -63,6 +67,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { status: sessionStatus } = useSession();
   const { status: walletStatus, address, isConnecting, getSigningProvider } = useWallet();
   const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
+  const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   const { markets } = useHyperliquidMarkets();
 
   const [side, setSide] = useState<PerpSide>("long");
@@ -101,14 +106,18 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     [side, marginUsdc, leverage, market?.price, maxLeverage, availableBalance]
   );
 
-  // Real order execution (Phase 4). Fetches a FRESH price/network snapshot
-  // right before signing — never trusts whatever the 30s-polled
-  // useHyperliquidMarkets() state happens to hold at the moment the button
-  // is tapped, since that's what the slippage-bounded order price and the
-  // mainnet/testnet signing mode are derived from.
+  // Real order execution (Phase 4), signed by the Phase 5 agent wallet —
+  // no browser-wallet popup per trade, no chainId check to mismatch on.
+  // Fetches a FRESH price/network snapshot right before signing — never
+  // trusts whatever the 30s-polled useHyperliquidMarkets() state happens
+  // to hold at the moment the button is tapped, since that's what the
+  // slippage-bounded order price and the mainnet/testnet signing mode are
+  // derived from. `address` stays the user's real wallet address even
+  // though the agent does the signing — the agent trades ON BEHALF OF
+  // that account, which is what the server's pre-flight checks need to
+  // look at, not the agent's own (empty) balance.
   async function handleConfirmAndSign() {
-    const provider = getSigningProvider();
-    if (!provider || !address || previewResult.status !== "ok") return;
+    if (!address || !agentWallet || previewResult.status !== "ok") return;
 
     setExecutionState({ stage: "signing-leverage" });
 
@@ -135,7 +144,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     }
 
     const result = await signAndSubmitPerpOrder({
-      provider,
+      wallet: agentWallet,
       address,
       assetIndex: freshMarket.assetIndex,
       szDecimals: freshMarket.szDecimals,
@@ -156,6 +165,27 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     if (result.status !== "wallet-rejected" && result.status !== "rejected") {
       refreshAccount();
     }
+  }
+
+  // One-time-per-session approval that activates the agent wallet above —
+  // signed by the REAL browser wallet (the only step that still is),
+  // using a fresh price/network check the same way handleConfirmAndSign
+  // does, since isTestnet must be correct here too.
+  async function handleApproveAgent() {
+    const provider = getSigningProvider();
+    if (!provider || !address) return;
+
+    let isTestnet = false;
+    try {
+      const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
+      const json = (await res.json()) as { isTestnet?: boolean };
+      isTestnet = Boolean(json.isTestnet);
+    } catch {
+      // isTestnet stays false — approveAgent() will still run, just against
+      // mainnet's hyperliquidChain classification if this fetch failed.
+    }
+
+    await approveAgent({ provider, address, isTestnet });
   }
 
   function handleClosePreview() {
@@ -225,6 +255,32 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
               <TriangleAlert size={14} />
               <p className="text-[13px]">{t("hyperliquidAccount.dataUnavailable")}</p>
             </div>
+          </Card>
+        ) : agentStatus !== "approved" ? (
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-2 text-ink-faint">
+                <Wallet size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] font-medium text-ink">{t("perpTrade.approveAgentTitle")}</p>
+                <p className="text-xs text-ink-muted">{t("perpTrade.approveAgentSubtitle")}</p>
+              </div>
+            </div>
+            {agentStatus === "error" && agentError ? (
+              <p className="mt-3 text-xs text-negative">{agentError}</p>
+            ) : null}
+            <button
+              onClick={() => void handleApproveAgent()}
+              disabled={agentStatus === "approving"}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-60"
+            >
+              {agentStatus === "approving" ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                t("perpTrade.approveAgentButton")
+              )}
+            </button>
           </Card>
         ) : (
           <Card>

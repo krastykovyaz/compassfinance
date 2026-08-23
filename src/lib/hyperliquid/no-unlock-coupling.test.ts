@@ -67,6 +67,8 @@ describe("Hyperliquid Trading (preview + real execution) stays isolated and cent
   const files = [
     "src/lib/hyperliquid/perp-order-calculator.ts",
     "src/lib/hyperliquid/hyperliquid-order-signer.ts",
+    "src/lib/hyperliquid/hyperliquid-agent-wallet.ts",
+    "src/lib/hyperliquid/hyperliquid-agent-provider.tsx",
     "src/app/hyperliquid/[coin]/page.tsx",
     "src/app/api/hyperliquid/order/route.ts",
     "src/components/hyperliquid/perp-order-preview-sheet.tsx",
@@ -112,10 +114,14 @@ describe("Hyperliquid Trading (preview + real execution) stays isolated and cent
     expect(sawAtLeastOneReference).toBe(true); // sanity: the test actually found the real call site
   });
 
-  it("the real allowlist of submittable action types (updateLeverage, order) is present in service.ts — nothing else is ever forwarded to Hyperliquid", () => {
+  it("the real allowlist of submittable action types (updateLeverage, order, approveAgent) is present in service.ts — nothing else is ever forwarded to Hyperliquid", () => {
     const src = readFileSync("src/server/hyperliquid/service.ts", "utf8");
     expect(src).toMatch(/"updateLeverage"/);
     expect(src).toMatch(/"order"/);
+    // Phase 5: the one-time agent-approval action, still routed through
+    // the same allowlist/relay path as every other action, never a
+    // separate/looser one.
+    expect(src).toMatch(/"approveAgent"/);
   });
 });
 

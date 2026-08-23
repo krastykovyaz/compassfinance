@@ -137,7 +137,7 @@ export type HyperliquidFillsResult =
 /** The only two action types this relay will ever forward — anything else
  * is rejected before Hyperliquid is ever contacted. Deliberately NOT a
  * generic signed-action proxy. */
-export type HyperliquidExchangeActionType = "updateLeverage" | "order";
+export type HyperliquidExchangeActionType = "updateLeverage" | "order" | "approveAgent";
 
 export type HyperliquidSignature = { r: string; s: string; v: number };
 

@@ -20,7 +20,7 @@
 // keeps. The server never signs anything either; it only validates and
 // relays what the wallet already signed.
 
-import { signL1Action, type AbstractViemJsonRpcAccount } from "@nktkas/hyperliquid/signing";
+import { signL1Action, type AbstractViemJsonRpcAccount, type AbstractWallet } from "@nktkas/hyperliquid/signing";
 import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import {
   getChainId as getWalletChainId,
@@ -215,7 +215,13 @@ export type PerpOrderExecutionResult = { status: "wallet-rejected" } | Hyperliqu
 export type PerpOrderExecutionStage = "signing-leverage" | "submitting-leverage" | "signing-order" | "submitting-order";
 
 export async function signAndSubmitPerpOrder(params: {
-  provider: Eip1193Provider;
+  // The already-built signer — either the browser-wallet adapter
+  // (createHyperliquidWalletAdapter) for a one-off signature, or an
+  // agent's local viem account (Phase 5) for the common case of every
+  // trade after the one-time approval. This function is signer-agnostic:
+  // it has no idea which one it was given, and needs no private-key-
+  // related code of its own either way.
+  wallet: AbstractWallet;
   address: string;
   assetIndex: number;
   szDecimals: number;
@@ -226,7 +232,7 @@ export async function signAndSubmitPerpOrder(params: {
   isTestnet: boolean;
   onStageChange?: (stage: PerpOrderExecutionStage) => void;
 }): Promise<PerpOrderExecutionResult> {
-  const wallet = createHyperliquidWalletAdapter(params.provider, params.address);
+  const { wallet } = params;
 
   const leverageAction = buildUpdateLeverageAction({ assetIndex: params.assetIndex, leverage: params.leverage });
   const leverageNonce = nextNonce();
