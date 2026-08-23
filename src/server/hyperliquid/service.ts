@@ -19,6 +19,8 @@ import {
   fetchClearinghouseState,
   fetchOpenOrders,
   fetchUserFills,
+  fetchUserAbstraction,
+  fetchSpotClearinghouseState,
   postExchange,
   type HyperliquidRawPosition,
 } from "./client";
@@ -258,9 +260,35 @@ export async function getHyperliquidAccount(address: string): Promise<Hyperliqui
         throw new Error(fetched.message);
       }
 
-      const accountValue = toNumber(fetched.data.marginSummary.accountValue);
-      const withdrawableBalance = toNumber(fetched.data.withdrawable);
+      let accountValue = toNumber(fetched.data.marginSummary.accountValue);
+      let withdrawableBalance = toNumber(fetched.data.withdrawable);
       const totalMarginUsed = toNumber(fetched.data.marginSummary.totalMarginUsed);
+
+      // Unified Account Mode (a setting the user enables in Hyperliquid's
+      // own app) makes the classic clearinghouseState balance/withdrawable
+      // figures above stale/not meaningful — real collateral lives in the
+      // spot clearinghouse state instead. Detect it and, when present,
+      // override with the real numbers. A failed detection/spot lookup
+      // falls back to the classic values already computed above rather
+      // than failing the whole account view — this override is additive,
+      // never the only source of truth for a request.
+      const abstraction = await fetchUserAbstraction(address);
+      if (abstraction.ok && abstraction.data === "unifiedAccount") {
+        const spot = await fetchSpotClearinghouseState(address);
+        if (spot.ok) {
+          const usdc = spot.data.balances.find((b) => b.coin === "USDC");
+          const usdcTotal = usdc ? toNumber(usdc.total) : NaN;
+          if (!Number.isNaN(usdcTotal)) {
+            accountValue = usdcTotal;
+            const availableEntry = spot.data.tokenToAvailableAfterMaintenance?.find(
+              ([token]) => token === usdc!.token
+            );
+            const available = availableEntry ? toNumber(availableEntry[1]) : NaN;
+            withdrawableBalance = Number.isNaN(available) ? usdcTotal : available;
+          }
+        }
+      }
+
       if ([accountValue, withdrawableBalance, totalMarginUsed].some(Number.isNaN)) {
         throw new Error(`Non-numeric account summary fields for ${address}`);
       }

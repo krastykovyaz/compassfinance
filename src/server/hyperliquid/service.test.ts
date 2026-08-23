@@ -8,6 +8,8 @@ const fetchOpenOrders = vi.fn();
 const fetchUserFills = vi.fn();
 const fetchMeta = vi.fn();
 const postExchange = vi.fn();
+const fetchUserAbstraction = vi.fn();
+const fetchSpotClearinghouseState = vi.fn();
 
 vi.mock("./client", () => ({
   fetchMetaAndAssetCtxs: (...args: unknown[]) => fetchMetaAndAssetCtxs(...args),
@@ -18,6 +20,8 @@ vi.mock("./client", () => ({
   fetchUserFills: (...args: unknown[]) => fetchUserFills(...args),
   fetchMeta: (...args: unknown[]) => fetchMeta(...args),
   postExchange: (...args: unknown[]) => postExchange(...args),
+  fetchUserAbstraction: (...args: unknown[]) => fetchUserAbstraction(...args),
+  fetchSpotClearinghouseState: (...args: unknown[]) => fetchSpotClearinghouseState(...args),
 }));
 
 import { clearMarketCache } from "@/server/market/cache";
@@ -49,6 +53,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   clearMarketCache();
   process.env.HYPERLIQUID_ENABLED = "true";
+  // Default: not a Unified Account — existing clearinghouseState-based
+  // account tests keep exercising the classic path unchanged. Tests about
+  // the unified override explicitly set these differently.
+  fetchUserAbstraction.mockResolvedValue({ ok: true, data: null });
+  fetchSpotClearinghouseState.mockResolvedValue({ ok: true, data: { balances: [] } });
 });
 
 afterEach(() => {
@@ -372,6 +381,99 @@ describe("getHyperliquidAccount", () => {
     await getHyperliquidAccount("0xabc");
 
     expect(fetchClearinghouseState).toHaveBeenCalledTimes(1);
+  });
+
+  // Reported bug: a real Hyperliquid testnet wallet with Unified Account
+  // Mode enabled (a setting the user turns on in Hyperliquid's own app)
+  // showed a real $999 spot balance in Hyperliquid's UI, but CompassFinance
+  // kept showing $0.00 available — because classic clearinghouseState's
+  // balance/withdrawable figures are documented by Hyperliquid as "not
+  // meaningful" once unified. Confirmed against the real Hyperliquid
+  // testnet API for that exact wallet before writing this fix.
+  describe("Unified Account Mode override — classic clearinghouseState balance is stale once unified", () => {
+    it("uses the spot USDC balance instead of clearinghouseState's when userAbstraction reports unifiedAccount", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { ...RAW_CLEARINGHOUSE_STATE, assetPositions: [], withdrawable: "0", marginSummary: { ...RAW_CLEARINGHOUSE_STATE.marginSummary, accountValue: "0" } },
+      });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "999.0", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "999.0"]],
+        },
+      });
+
+      const result = await getHyperliquidAccount("0xabc");
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.withdrawableBalance).toBe(999);
+        expect(result.account.accountValue).toBe(999);
+      }
+    });
+
+    it("uses tokenToAvailableAfterMaintenance (not raw total) as withdrawable when they differ — e.g. margin held against an open position", async () => {
+      fetchClearinghouseState.mockResolvedValue({ ok: true, data: RAW_CLEARINGHOUSE_STATE });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "999.0", hold: "300.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "699.0"]],
+        },
+      });
+
+      const result = await getHyperliquidAccount("0xabc");
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.accountValue).toBe(999);
+        expect(result.account.withdrawableBalance).toBe(699);
+      }
+    });
+
+    it("leaves the classic clearinghouseState values untouched when userAbstraction is null (the common, non-unified case)", async () => {
+      fetchClearinghouseState.mockResolvedValue({ ok: true, data: RAW_CLEARINGHOUSE_STATE });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: null });
+
+      const result = await getHyperliquidAccount("0xabc");
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.withdrawableBalance).toBe(7000);
+        expect(result.account.accountValue).toBe(10000);
+      }
+      expect(fetchSpotClearinghouseState).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the classic clearinghouseState values, without failing the whole request, when userAbstraction itself fails", async () => {
+      fetchClearinghouseState.mockResolvedValue({ ok: true, data: RAW_CLEARINGHOUSE_STATE });
+      fetchUserAbstraction.mockResolvedValue({ ok: false, reason: "network_error", message: "down" });
+
+      const result = await getHyperliquidAccount("0xabc");
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.withdrawableBalance).toBe(7000);
+        expect(result.account.accountValue).toBe(10000);
+      }
+    });
+
+    it("falls back to the classic values when unified but the account has no USDC spot balance entry at all", async () => {
+      fetchClearinghouseState.mockResolvedValue({ ok: true, data: RAW_CLEARINGHOUSE_STATE });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({ ok: true, data: { balances: [] } });
+
+      const result = await getHyperliquidAccount("0xabc");
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.account.withdrawableBalance).toBe(7000);
+        expect(result.account.accountValue).toBe(10000);
+      }
+    });
   });
 });
 

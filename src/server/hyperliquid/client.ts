@@ -304,6 +304,58 @@ export async function fetchClearinghouseState(
   return { ok: true, data: data as HyperliquidRawClearinghouseState };
 }
 
+// Hyperliquid's "Unified Account Mode" — an account-level setting a user
+// enables in Hyperliquid's own app, not something CompassFinance controls.
+// Once enabled, per Hyperliquid's docs, the classic clearinghouseState
+// balance/withdrawable figures above stop being meaningful: real
+// collateral is unified with the spot balance instead. This one extra
+// call is how service.ts detects whether that override applies for a
+// given address.
+export async function fetchUserAbstraction(user: string): Promise<HyperliquidFetchResult<string | null>> {
+  const result = await postInfo<unknown>({ type: "userAbstraction", user });
+  if (!result.ok) return result;
+
+  const data = result.data;
+  if (data !== null && typeof data !== "string") {
+    return { ok: false, reason: "malformed_response", message: `Malformed userAbstraction for ${user}` };
+  }
+  return { ok: true, data };
+}
+
+export type HyperliquidRawSpotBalance = {
+  coin: string;
+  token: number;
+  total: string;
+  hold: string;
+  entryNtl: string;
+};
+
+export type HyperliquidRawSpotClearinghouseState = {
+  balances: HyperliquidRawSpotBalance[];
+  // [tokenId, availableAfterMaintenanceAsString][] — present on Hyperliquid's
+  // real responses but not documented as guaranteed, so treated as optional.
+  tokenToAvailableAfterMaintenance?: [number, string][];
+};
+
+export async function fetchSpotClearinghouseState(
+  user: string
+): Promise<HyperliquidFetchResult<HyperliquidRawSpotClearinghouseState>> {
+  const result = await postInfo<unknown>({ type: "spotClearinghouseState", user });
+  if (!result.ok) return result;
+
+  const data = result.data as Partial<HyperliquidRawSpotClearinghouseState> | null;
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray(data.balances) ||
+    !data.balances.every((b) => b && typeof b.coin === "string" && typeof b.total === "string")
+  ) {
+    return { ok: false, reason: "malformed_response", message: `Malformed spot clearinghouse state for ${user}` };
+  }
+
+  return { ok: true, data: data as HyperliquidRawSpotClearinghouseState };
+}
+
 export async function fetchOpenOrders(user: string): Promise<HyperliquidFetchResult<HyperliquidRawOpenOrder[]>> {
   const result = await postInfo<unknown>({ type: "openOrders", user });
   if (!result.ok) return result;

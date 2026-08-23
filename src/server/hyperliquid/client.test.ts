@@ -7,6 +7,8 @@ import {
   fetchClearinghouseState,
   fetchOpenOrders,
   fetchUserFills,
+  fetchUserAbstraction,
+  fetchSpotClearinghouseState,
 } from "./client";
 
 function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }) {
@@ -283,6 +285,90 @@ describe("fetchClearinghouseState", () => {
   it("returns network_error when fetch itself rejects", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
     const result = await fetchClearinghouseState("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("network_error");
+  });
+});
+
+describe("fetchUserAbstraction", () => {
+  it("returns the raw string when the account is a real Unified Account (verified against Hyperliquid testnet)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("unifiedAccount")));
+    const result = await fetchUserAbstraction("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toBe("unifiedAccount");
+  });
+
+  it("returns null for the common, non-unified account — a real, valid state, not malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(null)));
+    const result = await fetchUserAbstraction("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toBeNull();
+  });
+
+  it("posts the user address, never any internal id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(null));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchUserAbstraction("0xabc");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ type: "userAbstraction", user: "0xabc" });
+  });
+
+  it("returns malformed_response for an unexpected shape (e.g. an object instead of a string/null)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ unexpected: true })));
+    const result = await fetchUserAbstraction("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed_response");
+  });
+
+  it("returns network_error when fetch itself rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const result = await fetchUserAbstraction("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("network_error");
+  });
+});
+
+describe("fetchSpotClearinghouseState", () => {
+  const RAW_SPOT_STATE = {
+    balances: [{ coin: "USDC", token: 0, total: "999.0", hold: "0.0", entryNtl: "0.0" }],
+    tokenToAvailableAfterMaintenance: [[0, "999.0"]],
+  };
+
+  it("returns the raw spot balances on success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(RAW_SPOT_STATE)));
+    const result = await fetchSpotClearinghouseState("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.balances).toEqual(RAW_SPOT_STATE.balances);
+      expect(result.data.tokenToAvailableAfterMaintenance).toEqual([[0, "999.0"]]);
+    }
+  });
+
+  it("returns ok with an empty balances array — no spot holdings is a normal state, not malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ balances: [] })));
+    const result = await fetchSpotClearinghouseState("0xabc");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.balances).toEqual([]);
+  });
+
+  it("posts the user address, never any internal id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(RAW_SPOT_STATE));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchSpotClearinghouseState("0xabc");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ type: "spotClearinghouseState", user: "0xabc" });
+  });
+
+  it("returns malformed_response when balances is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({})));
+    const result = await fetchSpotClearinghouseState("0xabc");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed_response");
+  });
+
+  it("returns network_error when fetch itself rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const result = await fetchSpotClearinghouseState("0xabc");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("network_error");
   });
