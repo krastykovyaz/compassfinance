@@ -27,7 +27,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        <div className="min-h-dvh w-full bg-surface-2 md:flex md:items-center md:justify-center md:py-10">
+        {/* This wrapper and the "phone" div below it both use min-h-dvh —
+            on real mobile Safari the two can briefly disagree by a few px
+            while the address bar collapses/expands, exposing a sliver of
+            this wrapper's background at the bottom edge. The grey
+            "device frame" look is desktop-only anyway, so keep this
+            wrapper the same color as the inner canvas below md — any gap
+            is then invisible instead of a visible seam. */}
+        <div className="min-h-dvh w-full bg-canvas md:flex md:items-center md:justify-center md:bg-surface-2 md:py-10">
           <div className="mx-auto min-h-dvh w-full bg-canvas md:min-h-[860px] md:w-[420px] md:overflow-hidden md:rounded-[40px] md:border md:border-border md:shadow-2xl md:shadow-black/10">
             <AuthSessionProvider>
               <LocaleProvider>
