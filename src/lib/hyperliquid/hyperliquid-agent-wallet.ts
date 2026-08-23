@@ -107,10 +107,13 @@ export async function approveAgent(params: {
     signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
+    // Temporary extra detail (sent chainId + wallet's raw eth_chainId) to
+    // diagnose a live MetaMask chainId-mismatch report where the numbers
+    // shown didn't add up to a real hex conversion — remove once resolved.
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)}`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent chainId=${action.signatureChainId}, raw eth_chainId decimal=${chainId}]`,
     };
   }
 
