@@ -188,18 +188,10 @@ export async function approveAgent(params: {
     signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    // Temporary extra detail to diagnose a live chainId-mismatch report —
-    // remove once resolved. Shows what we sent, what the SDK's own
-    // internal state held AT THE MOMENT OF FAILURE (post-correction —
-    // if these still don't match wcChains, the correction itself is
-    // being undone by something between running it and the wallet
-    // actually servicing the request), and the session's real approved
-    // chains for comparison.
-    const wc = params.provider as unknown as WalletConnectInternals;
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent=${action.signatureChainId}, outerChainId=${wc.chainId}, innerChainId=${wc.signer?.rpcProviders?.eip155?.chainId}, wcChains=${JSON.stringify(wcChains)}]`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)}`,
     };
   }
 
