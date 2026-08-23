@@ -8,9 +8,18 @@ import { usePriceChartCandles } from "@/lib/market/use-price-chart-candles";
 import { CHART_RANGES, ChartRange, MarketSymbol } from "@/lib/market/market-types";
 import { cn } from "@/lib/utils";
 
-export function PriceChart({ slug }: { slug: MarketSymbol }) {
+export function PriceChart({
+  slug,
+  preferHyperliquid,
+}: {
+  slug: MarketSymbol;
+  /** Only the Hyperliquid trading page should pass this — see
+   * use-price-chart-candles.ts's header comment for why this must stay
+   * an explicit, page-scoped opt-in rather than automatic. */
+  preferHyperliquid?: boolean;
+}) {
   const [range, setRange] = useState<ChartRange>("1D");
-  const { candles, status, reason } = usePriceChartCandles(slug, range);
+  const { candles, status, reason } = usePriceChartCandles(slug, range, preferHyperliquid);
 
   const series = useMemo(() => candles.map((c) => ({ t: c.t, v: c.c })), [candles]);
   const positive =

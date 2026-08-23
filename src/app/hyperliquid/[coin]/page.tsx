@@ -284,7 +284,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
           ) : null}
         </div>
 
-        <PriceChart slug={slug} />
+        <PriceChart slug={slug} preferHyperliquid />
 
         {view === "not-connected" ? (
           <Card>
