@@ -246,6 +246,40 @@ describe("approveAgent — orchestration", () => {
     expect(signedAction.signatureChainId).toBe("0xa4b1"); // 42161 in hex — from getChainId(), not hardcoded
   });
 
+  // Regression test for the reported bug persisting even after
+  // correctWalletConnectChainIdIfDesynced ran: getChainId() itself makes
+  // a fresh, live eth_chainId round trip through the same session that
+  // was found to actively re-corrupt its own internal chainId on every
+  // interaction — so calling it at all, even just to compute the value
+  // to sign, was undoing the fix before the real signing call happened.
+  // For a WalletConnect session, the chain must come from the session's
+  // own static namespace data instead, never a live round trip.
+  it("for a WalletConnect session, derives signatureChainId from the session's own approved chains — never from a live getChainId() round trip", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const wcProvider = {
+      ...mockProvider(),
+      session: {
+        namespaces: { eip155: { chains: ["eip155:1", "eip155:10", "eip155:137", "eip155:8453", "eip155:42161"] } },
+      },
+    } as unknown as Eip1193Provider;
+
+    await approveAgent({ provider: wcProvider, address: "0xuser", agentAddress: "0xagent", isTestnet: false });
+
+    expect(getChainId).not.toHaveBeenCalled();
+    const signedAction = signUserSignedAction.mock.calls[0][0].action;
+    expect(signedAction.signatureChainId).toBe("0xa4b1");
+  });
+
+  it("still uses getChainId() for a non-WalletConnect (injected) provider — no session data to derive from instead", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    await approveAgent({ provider: mockProvider(), address: "0xuser", agentAddress: "0xagent", isTestnet: false });
+
+    expect(getChainId).toHaveBeenCalled();
+  });
+
   it("submits through the existing /api/hyperliquid/order route, not directly to Hyperliquid", async () => {
     signUserSignedAction.mockResolvedValue(SIGNATURE);
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } }));
@@ -296,7 +330,7 @@ describe("approveAgent — orchestration", () => {
       status: "rejected",
       reason: "invalid-request",
       message:
-        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539 [sent=0xa4b1, eth_chainId=42161, isWC=false, wcChains=undefined]",
+        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539 [sent=0xa4b1, outerChainId=undefined, innerChainId=undefined, wcChains=null]",
     });
   });
 

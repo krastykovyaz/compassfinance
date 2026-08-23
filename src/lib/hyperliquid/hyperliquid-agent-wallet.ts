@@ -106,22 +106,37 @@ export type ApproveAgentResult = { status: "wallet-rejected" } | HyperliquidExch
  * future SDK release fixes this upstream. A no-op for the common case
  * (injected wallets, or a WalletConnect session whose internal state
  * already agrees with its own session). */
-export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider): void {
-  const wc = provider as unknown as {
-    session?: { namespaces?: Record<string, { chains?: string[] }> };
-    chainId?: number;
-    signer?: { rpcProviders?: { eip155?: { chainId?: number } } };
-  };
-  const chains = wc.session?.namespaces?.eip155?.chains;
-  if (!chains || chains.length === 0) return; // not WalletConnect, or no session yet
+type WalletConnectInternals = {
+  session?: { namespaces?: Record<string, { chains?: string[] }> };
+  chainId?: number;
+  signer?: { rpcProviders?: { eip155?: { chainId?: number } } };
+};
 
-  // Prefer Arbitrum One (this app's primary chain) if it's approved;
-  // otherwise fall back to whichever approved chain comes first — either
-  // way, only ever a chain the session itself already approved.
+/** The approved eip155 chains for a WalletConnect session, straight from
+ * its own (immutable, negotiated-once) namespace data — never from any
+ * live-tracked, event-mutable "current chain" pointer. Returns null for
+ * a non-WalletConnect provider or one with no session yet. */
+function walletConnectApprovedChains(provider: Eip1193Provider): string[] | null {
+  const chains = (provider as unknown as WalletConnectInternals).session?.namespaces?.eip155?.chains;
+  return chains && chains.length > 0 ? chains : null;
+}
+
+/** Prefer Arbitrum One (this app's primary chain) if it's approved;
+ * otherwise whichever approved chain comes first — either way, only
+ * ever a chain the session itself actually approved. */
+function preferredApprovedChain(chains: string[]): number {
   const preferred = chains.find((c) => c === "eip155:42161") ?? chains[0];
-  const corrected = Number(preferred.split(":")[1]);
+  return Number(preferred.split(":")[1]);
+}
+
+export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider): void {
+  const chains = walletConnectApprovedChains(provider);
+  if (!chains) return; // not WalletConnect, or no session yet
+
+  const corrected = preferredApprovedChain(chains);
   if (!Number.isFinite(corrected)) return;
 
+  const wc = provider as unknown as WalletConnectInternals;
   if (wc.chainId === undefined || !chains.includes(`eip155:${wc.chainId}`)) {
     wc.chainId = corrected;
   }
@@ -142,9 +157,16 @@ export async function approveAgent(params: {
   agentAddress: `0x${string}`;
   isTestnet: boolean;
 }): Promise<ApproveAgentResult> {
-  correctWalletConnectChainIdIfDesynced(params.provider);
   const wallet = createHyperliquidWalletAdapter(params.provider, params.address);
-  const chainId = await getChainId(params.provider);
+
+  // For WalletConnect, read the chain straight from the session's own
+  // static namespace data — never via a live eth_chainId round trip.
+  // That round trip was found to re-trigger the same live desync it was
+  // meant to detect, undoing any earlier correction before the sign call
+  // even happens. The injected-wallet path (no session) is unaffected by
+  // any of this and keeps using the real live value.
+  const wcChains = walletConnectApprovedChains(params.provider);
+  const chainId = wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider);
   const nonce = nextNonce();
 
   const action = buildApproveAgentAction({
@@ -155,23 +177,29 @@ export async function approveAgent(params: {
     nonce,
   });
 
+  // Run immediately before the actual signing call — not earlier, and
+  // with nothing async in between — so nothing has a chance to
+  // re-corrupt the SDK's own internal chainId (used to scope the relayed
+  // signing request itself) between correcting it and using it.
+  correctWalletConnectChainIdIfDesynced(params.provider);
+
   let signature: HyperliquidSignature;
   try {
     signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    // Temporary extra detail to diagnose a live chainId-mismatch report
-    // where the numbers shown didn't add up to a real hex conversion —
-    // remove once resolved. Dumps whatever WalletConnect actually
-    // negotiated (if this is a WalletConnect session at all) alongside
-    // the derived eth_chainId, so the next failure shows the real
-    // session data instead of just the number we computed from it.
-    const wcSession = (params.provider as { session?: { namespaces?: Record<string, { chains?: string[] }> } })
-      .session;
+    // Temporary extra detail to diagnose a live chainId-mismatch report —
+    // remove once resolved. Shows what we sent, what the SDK's own
+    // internal state held AT THE MOMENT OF FAILURE (post-correction —
+    // if these still don't match wcChains, the correction itself is
+    // being undone by something between running it and the wallet
+    // actually servicing the request), and the session's real approved
+    // chains for comparison.
+    const wc = params.provider as unknown as WalletConnectInternals;
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent=${action.signatureChainId}, eth_chainId=${chainId}, isWC=${!!wcSession}, wcChains=${JSON.stringify(wcSession?.namespaces?.eip155?.chains)}]`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent=${action.signatureChainId}, outerChainId=${wc.chainId}, innerChainId=${wc.signer?.rpcProviders?.eip155?.chainId}, wcChains=${JSON.stringify(wcChains)}]`,
     };
   }
 
