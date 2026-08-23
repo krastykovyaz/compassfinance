@@ -96,18 +96,16 @@ describe("POST /api/hyperliquid/order", () => {
     expect(submitHyperliquidExchangeAction).not.toHaveBeenCalled();
   });
 
-  it("calls the service with only the wallet-declared address, never the authenticated userId", async () => {
+  it("calls the service with the authenticated userId AND the wallet-declared address — Phase 7 forwards userId for the real-trading education gate, but the trade itself still executes against the wallet's own address, never one derived from userId", async () => {
     await POST(request(VALID_BODY));
 
     expect(submitHyperliquidExchangeAction).toHaveBeenCalledWith(
+      "user-1",
       ADDRESS,
       VALID_BODY.action,
       VALID_BODY.nonce,
       VALID_BODY.signature
     );
-    for (const call of submitHyperliquidExchangeAction.mock.calls) {
-      expect(call).not.toContain("user-1");
-    }
   });
 
   it("returns the service's real result verbatim, on success", async () => {

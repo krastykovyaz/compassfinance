@@ -22,6 +22,7 @@ function makeMeResponse(overrides: Partial<MeResponse> = {}): MeResponse {
       unlockedAchievements: [],
       completedLessons: [],
       completedQuizzes: [],
+      practiceTradedAssetIds: [],
       lastActivityAt: null,
     },
     assetProgress: {},
@@ -46,6 +47,7 @@ describe("buildProgressStateFromServer — Milestone 11.1 authenticated hydratio
         unlockedAchievements: ["FIRST_LESSON", "WEEK_STREAK"],
         completedLessons: ["sp500", "aapl"],
         completedQuizzes: ["sp500", "aapl"],
+        practiceTradedAssetIds: [],
         lastActivityAt: "2026-08-17T00:00:00.000Z",
       },
     });

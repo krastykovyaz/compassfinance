@@ -30,6 +30,10 @@ export type RawProgressInput = {
    * (paper trading is server-backed, authenticated-only — see
    * src/lib/trading/), so both call sites of this function pass 0. */
   distinctAssetsInvested: number;
+  /** assetIds practice-traded at least once — see LearningProgress's field
+   * of the same name. Same "local/anonymous has none" reasoning as
+   * distinctAssetsInvested above: both call sites pass []. */
+  practiceTradedAssetIds: string[];
   achievements: string[];
   lastActivityAt: string | null;
 };
@@ -63,6 +67,7 @@ export function deriveLearningProgress(raw: RawProgressInput): LearningProgress 
     assetsExplored: raw.assetsExploredSlugs.length,
     investmentsMade: raw.investmentsMade,
     distinctAssetsInvested: raw.distinctAssetsInvested,
+    practiceTradedAssetIds: raw.practiceTradedAssetIds,
     unlockedAchievements: raw.achievements,
     completedLessons: raw.completedLessons,
     completedQuizzes: raw.completedQuizzes,

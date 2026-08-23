@@ -10,6 +10,11 @@ const fetchMeta = vi.fn();
 const postExchange = vi.fn();
 const fetchUserAbstraction = vi.fn();
 const fetchSpotClearinghouseState = vi.fn();
+const getServerLearningProgress = vi.fn();
+
+vi.mock("@/server/repositories/learning-repository", () => ({
+  getServerLearningProgress: (...args: unknown[]) => getServerLearningProgress(...args),
+}));
 
 vi.mock("./client", () => ({
   fetchMetaAndAssetCtxs: (...args: unknown[]) => fetchMetaAndAssetCtxs(...args),
@@ -640,6 +645,30 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
   };
   const SIGNATURE = { r: "0xaaa", s: "0xbbb", v: 27 as const };
   const NONCE = 1_700_000_000_000;
+  const USER_ID = "user-1";
+
+  // Fully unlocked for both real-tradeable assets — the default for every
+  // existing test in this describe block, so tests about order mechanics
+  // (leverage, balance, partial fills, action-type allowlisting...) don't
+  // also have to be about the Phase 7 education gate. Tests that ARE
+  // about the gate (below) explicitly override this per-case.
+  const REAL_TRADING_UNLOCKED_PROGRESS = {
+    totalXP: 100000,
+    level: 10,
+    lessonsCompleted: 13,
+    quizzesCompleted: 13,
+    correctAnswers: 100,
+    currentStreak: 30,
+    longestStreak: 30,
+    assetsExplored: 13,
+    investmentsMade: 10,
+    distinctAssetsInvested: 10,
+    unlockedAchievements: [],
+    completedLessons: ["btc", "eth"],
+    completedQuizzes: ["btc", "eth"],
+    practiceTradedAssetIds: ["btc", "eth"],
+    lastActivityAt: new Date().toISOString(),
+  };
 
   function mockAccountBalance(withdrawable: string) {
     fetchClearinghouseState.mockResolvedValue({
@@ -655,12 +684,13 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
 
   beforeEach(() => {
     fetchMeta.mockResolvedValue({ ok: true, data: RAW_META }); // BTC index 0, ETH index 1
+    getServerLearningProgress.mockResolvedValue(REAL_TRADING_UNLOCKED_PROGRESS);
   });
 
   it("returns rejected/disabled and never calls the client when the flag is off", async () => {
     process.env.HYPERLIQUID_ENABLED = "false";
 
-    const result = await submitHyperliquidExchangeAction("0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "rejected", reason: "disabled", message: expect.any(String) });
     expect(fetchMeta).not.toHaveBeenCalled();
@@ -669,7 +699,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
 
   it("rejects an action type outside the exact allowlist, never contacting Hyperliquid", async () => {
     const result = await submitHyperliquidExchangeAction(
-      "0xabc",
+      USER_ID, "0xabc",
       { type: "withdraw3", destination: "0xattacker", amount: "1000" },
       NONCE,
       SIGNATURE
@@ -686,7 +716,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     });
 
     const result = await submitHyperliquidExchangeAction(
-      "0xabc",
+      USER_ID, "0xabc",
       { type: "updateLeverage", asset: 0, isCross: true, leverage: 5 },
       NONCE,
       SIGNATURE
@@ -698,7 +728,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
 
   it("rejects leverage above the coin's real max leverage", async () => {
     const result = await submitHyperliquidExchangeAction(
-      "0xabc",
+      USER_ID, "0xabc",
       { type: "updateLeverage", asset: 0, isCross: true, leverage: 999 }, // BTC max is 50 in RAW_META
       NONCE,
       SIGNATURE
@@ -711,7 +741,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
   it("rejects an order whose notional exceeds what the account's balance could support even at max leverage", async () => {
     mockAccountBalance("1"); // $1 available, max leverage 50x -> max notional $50; order here is 0.01 * 60000 = $600
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
     expect(postExchange).not.toHaveBeenCalled();
@@ -733,7 +763,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       orders: [{ ...ORDER_ACTION.orders[0], r: true }],
     };
 
-    const result = await submitHyperliquidExchangeAction("0xabc", reduceOnlyAction, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", reduceOnlyAction, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "resting", orderId: 1 });
     expect(fetchClearinghouseState).not.toHaveBeenCalled();
@@ -743,18 +773,115 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
   it("still applies the balance pre-flight check to a normal (non reduce-only) order — the exemption isn't a blanket bypass", async () => {
     mockAccountBalance("1"); // same underfunded case as the test above, but r:false this time
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
     expect(postExchange).not.toHaveBeenCalled();
+  });
+
+  // Phase 7 — real trading requires the same education gate Paper
+  // Trading's own BUY enforces, PLUS a completed practice trade of this
+  // exact asset. See real-trading-access.ts for the pure gate logic;
+  // these tests prove the server actually calls it before ever
+  // forwarding a real (non-reduce-only) order to Hyperliquid.
+  describe("real-trading education gate (Phase 7)", () => {
+    it("rejects a non-reduce-only order when the required course/quiz aren't complete", async () => {
+      getServerLearningProgress.mockResolvedValue({
+        ...REAL_TRADING_UNLOCKED_PROGRESS,
+        completedLessons: [],
+        completedQuizzes: [],
+      });
+      mockAccountBalance("100000");
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "real-trading-locked", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-reduce-only order when education is done but this asset has never been Paper Traded", async () => {
+      getServerLearningProgress.mockResolvedValue({
+        ...REAL_TRADING_UNLOCKED_PROGRESS,
+        practiceTradedAssetIds: ["eth"], // btc's own course/quiz done, but never practice-traded btc
+      });
+      mockAccountBalance("100000");
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "real-trading-locked", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("never even checks the education gate for a reduce-only order — closing/reducing stays allowed regardless of unlock state", async () => {
+      getServerLearningProgress.mockResolvedValue({
+        ...REAL_TRADING_UNLOCKED_PROGRESS,
+        completedLessons: [],
+        completedQuizzes: [],
+        practiceTradedAssetIds: [],
+      });
+      mockAccountBalance("0");
+      postExchange.mockResolvedValue({
+        ok: true,
+        data: { status: "ok", response: { type: "order", data: { statuses: [{ resting: { oid: 1 } }] } } },
+      });
+      const reduceOnlyAction = { ...ORDER_ACTION, orders: [{ ...ORDER_ACTION.orders[0], r: true }] };
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", reduceOnlyAction, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "resting", orderId: 1 });
+      expect(getServerLearningProgress).not.toHaveBeenCalled();
+    });
+
+    it("allows the order through to the normal balance check once course, quiz, and a practice trade of this asset are all done", async () => {
+      getServerLearningProgress.mockResolvedValue(REAL_TRADING_UNLOCKED_PROGRESS);
+      mockAccountBalance("1"); // deliberately underfunded — proves the request reached the balance check, not that it succeeded
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+    });
+
+    it("regression: BTC and ETH real order submission both still work exactly as before once education + practice trade are done for each", async () => {
+      getServerLearningProgress.mockResolvedValue(REAL_TRADING_UNLOCKED_PROGRESS);
+      mockAccountBalance("100000");
+      postExchange.mockResolvedValue({
+        ok: true,
+        data: { status: "ok", response: { type: "order", data: { statuses: [{ resting: { oid: 1 } }] } } },
+      });
+
+      const btcResult = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      expect(btcResult).toEqual({ status: "resting", orderId: 1 });
+
+      const ethOrderAction = {
+        ...ORDER_ACTION,
+        orders: [{ ...ORDER_ACTION.orders[0], a: 1 }], // ETH is index 1 in RAW_META
+      };
+      const ethResult = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ethOrderAction, NONCE + 1, SIGNATURE);
+      expect(ethResult).toEqual({ status: "resting", orderId: 1 });
+    });
+
+    it("an updateLeverage action is never gated by real-trading unlock — only opening a real position is", async () => {
+      getServerLearningProgress.mockResolvedValue({
+        ...REAL_TRADING_UNLOCKED_PROGRESS,
+        completedLessons: [],
+        completedQuizzes: [],
+        practiceTradedAssetIds: [],
+      });
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok" } });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "pending" });
+      expect(postExchange).toHaveBeenCalled();
+    });
   });
 
   it("uses a FRESH balance check on every call, never a cached one — two calls hit fetchClearinghouseState twice", async () => {
     mockAccountBalance("100000");
     postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
 
-    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
-    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE + 1, SIGNATURE);
+    await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE + 1, SIGNATURE);
 
     expect(fetchClearinghouseState).toHaveBeenCalledTimes(2);
   });
@@ -763,7 +890,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     mockAccountBalance("100000");
     postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
 
-    await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(postExchange).toHaveBeenCalledWith({ action: ORDER_ACTION, nonce: NONCE, signature: SIGNATURE });
     // Same object reference, not a rebuilt copy.
@@ -773,7 +900,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
   it("classifies a plain ok response (updateLeverage) as pending", async () => {
     postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", UPDATE_LEVERAGE_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "pending" });
   });
@@ -785,7 +912,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       data: { status: "ok", response: { type: "order", data: { statuses: [{ resting: { oid: 77738308 } }] } } },
     });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "resting", orderId: 77738308 });
   });
@@ -800,7 +927,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       },
     });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "filled", orderId: 1, totalSize: 0.01, avgPrice: 60123.4 });
   });
@@ -815,7 +942,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       },
     });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "hyperliquid-rejected", message: "Order must have minimum value of $10." });
   });
@@ -824,7 +951,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     mockAccountBalance("100000");
     postExchange.mockResolvedValue({ ok: true, data: { status: "err", response: "Invalid signature" } });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "hyperliquid-rejected", message: "Invalid signature" });
   });
@@ -833,7 +960,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     mockAccountBalance("100000");
     postExchange.mockResolvedValue({ ok: false, reason: "network_error", message: "timed out" });
 
-    const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+    const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
     expect(result).toEqual({ status: "network-failure", message: "timed out" });
   });
@@ -851,7 +978,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     it("skips the asset/universe lookup entirely — never calls fetchMeta or fetchClearinghouseState", async () => {
       postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
 
-      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
 
       expect(result).toEqual({ status: "pending" });
       expect(fetchMeta).not.toHaveBeenCalled();
@@ -861,7 +988,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     it("forwards the action byte-identical to postExchange, same as every other action type", async () => {
       postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default", data: {} } } });
 
-      await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
 
       expect(postExchange).toHaveBeenCalledWith({ action: APPROVE_AGENT_ACTION, nonce: NONCE, signature: SIGNATURE });
       expect(postExchange.mock.calls[0][0].action).toBe(APPROVE_AGENT_ACTION);
@@ -870,7 +997,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     it("still returns rejected/disabled when the flag is off — the top-level gate applies to every action type", async () => {
       process.env.HYPERLIQUID_ENABLED = "false";
 
-      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
 
       expect(result).toEqual({ status: "rejected", reason: "disabled", message: expect.any(String) });
       expect(postExchange).not.toHaveBeenCalled();
@@ -879,7 +1006,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
     it("classifies a Hyperliquid-side rejection of the approval the same as any other action", async () => {
       postExchange.mockResolvedValue({ ok: true, data: { status: "err", response: "Invalid signature" } });
 
-      const result = await submitHyperliquidExchangeAction("0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", APPROVE_AGENT_ACTION, NONCE, SIGNATURE);
 
       expect(result).toEqual({ status: "hyperliquid-rejected", message: "Invalid signature" });
     });
@@ -905,7 +1032,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       // 0.01 BTC @ $60000 = $600 notional; BTC max leverage 50x -> needs
       // >= $12 real balance. Classic $0 would reject this; the real $999
       // spot balance should allow it through to postExchange.
-      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
       expect(result.status).not.toBe("rejected");
       expect(postExchange).toHaveBeenCalled();
@@ -922,7 +1049,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
         },
       });
 
-      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
       expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
       expect(postExchange).not.toHaveBeenCalled();
@@ -944,7 +1071,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       await getHyperliquidAccount("0xabc"); // populate the cache
       expect(fetchClearinghouseState).toHaveBeenCalledTimes(1);
 
-      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
       await getHyperliquidAccount("0xabc"); // must NOT be served stale
       expect(fetchClearinghouseState.mock.calls.length).toBeGreaterThan(1);
@@ -954,7 +1081,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       mockAccountBalance("1"); // triggers the insufficient-balance pre-flight rejection
 
       await getHyperliquidAccount("0xabc"); // populate the cache — 1 call
-      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
       expect(result.status).toBe("rejected");
       expect(postExchange).not.toHaveBeenCalled();
       // The pre-flight balance check itself always makes its own FRESH,
@@ -974,7 +1101,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       await getHyperliquidAccount("0xabc");
       expect(fetchClearinghouseState).toHaveBeenCalledTimes(1);
 
-      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
       await getHyperliquidAccount("0xabc");
       expect(fetchClearinghouseState.mock.calls.length).toBeGreaterThan(1);
@@ -991,7 +1118,7 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       expect(fetchOpenOrders).toHaveBeenCalledTimes(1);
       expect(fetchUserFills).toHaveBeenCalledTimes(1);
 
-      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      await submitHyperliquidExchangeAction(USER_ID, "0xabc", ORDER_ACTION, NONCE, SIGNATURE);
 
       await getHyperliquidOpenOrders("0xabc");
       await getHyperliquidUserFills("0xabc", 20);

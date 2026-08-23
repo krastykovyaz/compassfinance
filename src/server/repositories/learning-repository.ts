@@ -17,19 +17,25 @@ async function getInvestmentsMadeCount(userId: string): Promise<number> {
 }
 
 // Milestone 19: the "Diversified" achievement requires 3 DISTINCT assets,
-// not 3 trades — see achievements.ts. This is a real count of unique
-// assetIds across every trade (BUY or SELL) ever made, not a proxy.
-async function getDistinctAssetsInvestedCount(userId: string): Promise<number> {
+// not 3 trades — see achievements.ts. `distinctAssetsInvested` (the count
+// that achievement checks) is just this array's length.
+//
+// Phase 7 (real-trading education gate): also the per-asset membership
+// list src/lib/hyperliquid/real-trading-access.ts checks before letting a
+// learner move from Paper Trading to a real Hyperliquid order on that same
+// asset — which specific assetIds has this user actually practiced
+// trading, not just how many.
+async function getPracticeTradedAssetIds(userId: string): Promise<string[]> {
   const rows = await prisma.paperTrade.findMany({
     where: { account: { userId } },
     select: { assetId: true },
     distinct: ["assetId"],
   });
-  return rows.length;
+  return rows.map((r) => r.assetId);
 }
 
 export async function getServerLearningProgress(userId: string): Promise<LearningProgress> {
-  const [xpAgg, lessons, quizzes, achievements, stats, investmentsMade, distinctAssetsInvested] =
+  const [xpAgg, lessons, quizzes, achievements, stats, investmentsMade, practiceTradedAssetIds] =
     await Promise.all([
       prisma.userXPEvent.aggregate({ where: { userId }, _sum: { amount: true } }),
       prisma.userLearningProgress.findMany({
@@ -43,7 +49,7 @@ export async function getServerLearningProgress(userId: string): Promise<Learnin
       prisma.userAchievement.findMany({ where: { userId }, select: { achievementId: true } }),
       prisma.userLearningStats.findUnique({ where: { userId } }),
       getInvestmentsMadeCount(userId),
-      getDistinctAssetsInvestedCount(userId),
+      getPracticeTradedAssetIds(userId),
     ]);
 
   const totalXP = xpAgg._sum.amount ?? 0;
@@ -65,10 +71,11 @@ export async function getServerLearningProgress(userId: string): Promise<Learnin
     longestStreak: stats?.longestStreak ?? 0,
     assetsExplored: stats ? (JSON.parse(stats.assetsExploredSlugs) as string[]).length : 0,
     investmentsMade,
-    distinctAssetsInvested,
+    distinctAssetsInvested: practiceTradedAssetIds.length,
     unlockedAchievements: [],
     completedLessons,
     completedQuizzes,
+    practiceTradedAssetIds,
     lastActivityAt: stats?.lastActivityAt?.toISOString() ?? null,
   };
 

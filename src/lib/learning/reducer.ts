@@ -52,6 +52,7 @@ export function applyAchievementCheck(
     // trade" anymore, so this is always 0 here.
     investmentsMade: 0,
     distinctAssetsInvested: 0,
+    practiceTradedAssetIds: [],
     achievements: s.achievements,
     lastActivityAt: s.lastActivityAt,
   });

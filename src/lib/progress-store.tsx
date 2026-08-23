@@ -203,6 +203,7 @@ function useAnonymousProgress(): BaseValue {
         // trades to report, same as it has no cash balance or positions.
         investmentsMade: 0,
         distinctAssetsInvested: 0,
+        practiceTradedAssetIds: [],
         achievements: state.achievements,
         lastActivityAt: state.lastActivityAt,
       }),
@@ -380,6 +381,7 @@ function useAuthenticatedProgress(
     unlockedAchievements: [],
     completedLessons: [],
     completedQuizzes: [],
+    practiceTradedAssetIds: [],
     lastActivityAt: null,
   };
 

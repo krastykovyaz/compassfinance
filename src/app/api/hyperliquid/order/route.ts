@@ -4,12 +4,17 @@
 // placement) — this route never signs anything and never sees a private
 // key. The signature was produced client-side, inside the user's own
 // connected wallet, before this request was ever sent. Auth-gated for
-// product consistency (same stance as account/route.ts): requireUserId()
-// is a gate only, its value is discarded immediately and never forwarded
-// downstream — the actual Hyperliquid call is address-only, and Hyperliquid
-// itself independently recovers the true signer from the signature, so a
+// product consistency (same stance as account/route.ts).
+//
+// requireUserId() used to be a gate only, its value discarded immediately —
+// the actual Hyperliquid call is address-only, and Hyperliquid itself
+// independently recovers the true signer from the signature, so a
 // mismatched client-declared address can't move anyone else's funds (see
-// submitHyperliquidExchangeAction's own comments for the full reasoning).
+// submitHyperliquidExchangeAction's own comments for that reasoning, still
+// true and unchanged). Phase 7 now DOES forward userId downstream too,
+// but only to look up the caller's OWN learning progress for the
+// real-trading education gate — never used to authorize the trade itself
+// or attributed to a different account.
 
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
@@ -45,7 +50,7 @@ function isValidSubmissionBody(value: unknown): value is SubmissionBody {
 
 export async function POST(req: Request) {
   return withApiErrorHandling(async () => {
-    await requireUserId(); // auth gate only — never forwarded
+    const userId = await requireUserId();
 
     if (!checkRateLimit(`hl-order:${getClientKey(req.headers)}`)) {
       throw new Error("Too many requests — please wait a moment before trying again.");
@@ -57,6 +62,7 @@ export async function POST(req: Request) {
     }
 
     const result = await submitHyperliquidExchangeAction(
+      userId,
       body.address,
       body.action,
       body.nonce,

@@ -64,12 +64,22 @@ describe("The wallet layer never touches Paper Trading or the learning/unlock sy
 // "who can submit a real order" stays answerable by reading one small
 // file list rather than the whole codebase.
 describe("Hyperliquid Trading (preview + real execution) stays isolated and centralized", () => {
+  // Phase 7 deliberately punches ONE narrow, tested hole in this
+  // isolation: real trading requires the same course/quiz/practice-trade
+  // gate Paper Trading's own BUY already enforces (see
+  // real-trading-access.ts). That coupling is intentionally excluded from
+  // this list — src/app/hyperliquid/[coin]/page.tsx (the UI gate) and
+  // src/lib/hyperliquid/real-trading-access.ts (the pure gate function,
+  // service.ts's server-side enforcement) all now legitimately reference
+  // learning progress. See the "Real-trading education gate" describe
+  // block below for what's actually asserted about that coupling instead
+  // of a blanket "never touches it" — everything else in the Hyperliquid
+  // surface still must never touch paper/unlock at all.
   const files = [
     "src/lib/hyperliquid/perp-order-calculator.ts",
     "src/lib/hyperliquid/hyperliquid-order-signer.ts",
     "src/lib/hyperliquid/hyperliquid-agent-wallet.ts",
     "src/lib/hyperliquid/hyperliquid-agent-provider.tsx",
-    "src/app/hyperliquid/[coin]/page.tsx",
     "src/app/api/hyperliquid/order/route.ts",
     "src/components/hyperliquid/perp-order-preview-sheet.tsx",
     "src/components/hyperliquid/close-position-modal.tsx",
@@ -129,6 +139,65 @@ describe("Hyperliquid Trading (preview + real execution) stays isolated and cent
   });
 });
 
+// Phase 7's one deliberate exception to "Hyperliquid never touches
+// Learning/Unlock" — real trading requires the same education gate Paper
+// Trading's own BUY already enforces, PLUS a completed practice trade.
+// This block proves the coupling stays narrow (one file directly touches
+// @/lib/learning) and one-directional (nothing under src/lib/hyperliquid,
+// src/server/hyperliquid, or src/components/hyperliquid ever imports the
+// Paper Trading system itself — only read-only learning PROGRESS, never
+// trading logic) rather than re-asserting the now-intentionally-false
+// "never touches it at all" from the block above.
+describe("Real-trading education gate — the one deliberate Hyperliquid ↔ Learning coupling", () => {
+  function allSourceFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) out.push(...allSourceFiles(path));
+      else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(path);
+    }
+    return out;
+  }
+
+  it("only real-trading-access.ts, service.ts, and the trading page's own view import from @/lib/learning within the Hyperliquid surface", () => {
+    const LEARNING_IMPORT = /@\/lib\/learning/;
+    const ALLOWED = new Set([
+      "src/lib/hyperliquid/real-trading-access.ts",
+      "src/server/hyperliquid/service.ts",
+      "src/app/hyperliquid/[coin]/page.tsx",
+    ]);
+
+    const scanned = [
+      ...allSourceFiles("src/lib/hyperliquid"),
+      ...allSourceFiles("src/server/hyperliquid"),
+      ...allSourceFiles("src/components/hyperliquid"),
+      "src/app/hyperliquid/[coin]/page.tsx",
+    ];
+    let sawAtLeastOneReference = false;
+    for (const file of scanned) {
+      const src = readFileSync(file, "utf8");
+      if (LEARNING_IMPORT.test(src)) {
+        sawAtLeastOneReference = true;
+        expect(ALLOWED.has(file)).toBe(true);
+      }
+    }
+    expect(sawAtLeastOneReference).toBe(true); // sanity: the gate actually exists somewhere
+  });
+
+  it("real-trading-access.ts never imports the Paper Trading system itself — only read-only learning progress/unlock logic", () => {
+    const src = readFileSync("src/lib/hyperliquid/real-trading-access.ts", "utf8");
+    expect(src).not.toMatch(/@\/lib\/trading/);
+    expect(src).not.toMatch(/@\/server\/(services\/trading-service|repositories\/paper-trading-repository)/);
+  });
+
+  it("the direction never reverses — unlocks.ts and trading-service.ts still import nothing Hyperliquid-related", () => {
+    for (const f of ["src/lib/learning/unlocks.ts", "src/server/services/trading-service.ts"]) {
+      const src = readFileSync(f, "utf8");
+      expect(src).not.toMatch(/hyperliquid/i);
+    }
+  });
+});
+
 describe("getInvestmentAccess is unaffected by HYPERLIQUID_ENABLED", () => {
   const ORIGINAL_ENV = { ...process.env };
 
@@ -154,6 +223,7 @@ describe("getInvestmentAccess is unaffected by HYPERLIQUID_ENABLED", () => {
     unlockedAchievements: [],
     completedLessons: [],
     completedQuizzes: [],
+    practiceTradedAssetIds: [],
     lastActivityAt: null,
   };
 

@@ -133,6 +133,7 @@ function progress(overrides: Partial<LearningProgress>): LearningProgress {
     unlockedAchievements: [],
     completedLessons: [],
     completedQuizzes: [],
+    practiceTradedAssetIds: [],
     lastActivityAt: null,
     ...overrides,
   };

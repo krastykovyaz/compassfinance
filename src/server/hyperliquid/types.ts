@@ -162,7 +162,8 @@ export type HyperliquidExchangeRejectionReason =
   | "unknown-coin"
   | "leverage-exceeds-max"
   | "insufficient-balance"
-  | "invalid-request";
+  | "invalid-request"
+  | "real-trading-locked";
 
 export type HyperliquidExchangeResult =
   | { status: "resting"; orderId: number }

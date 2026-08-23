@@ -16,8 +16,9 @@
 // design (see the Hyperliquid-integration isolation tests).
 
 import { use, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert, Lock, BookOpen } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
@@ -30,7 +31,10 @@ import { useHyperliquidAgent } from "@/lib/hyperliquid/hyperliquid-agent-provide
 import { useHyperliquidMarkets } from "@/lib/hyperliquid/hyperliquid-provider";
 import { resolveHyperliquidPanelView } from "@/components/portfolio/hyperliquid-account-panel";
 import { getHyperliquidCoinForAsset, isTradeableAssetId } from "@/lib/hyperliquid/asset-mapping";
+import { getRealTradingAccess } from "@/lib/hyperliquid/real-trading-access";
 import { getAsset } from "@/lib/assets/catalog";
+import { useProgress } from "@/lib/progress-store";
+import { getLessonHref } from "@/lib/learning/routes";
 import { AssetDetailsPanel } from "@/components/hyperliquid/asset-details-panel";
 import {
   buildPerpOrderPreview,
@@ -70,6 +74,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
   const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   const { markets } = useHyperliquidMarkets();
+  const { learningProgress, getBlockingInvestmentStage } = useProgress();
 
   const [side, setSide] = useState<PerpSide>("long");
   const [marginInput, setMarginInput] = useState("");
@@ -97,6 +102,16 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     accountStatus,
     errorMessage,
   });
+
+  // Phase 7 — real trading requires this asset's course + quiz
+  // (isInvestmentUnlocked, same gate Paper Trading BUY already enforces)
+  // PLUS a completed practice trade of it. Evaluated purely off
+  // learningProgress; the server independently re-checks the same thing
+  // (see submitHyperliquidExchangeAction) before ever forwarding a real
+  // order, so this client-side gate is a UX courtesy, not the real
+  // security boundary.
+  const realTradingAccess = getRealTradingAccess(slug, learningProgress);
+  const blockingStage = getBlockingInvestmentStage(slug);
 
   const previewResult = useMemo(
     () =>
@@ -286,6 +301,41 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
               <TriangleAlert size={14} />
               <p className="text-[13px]">{t("hyperliquidAccount.dataUnavailable")}</p>
             </div>
+          </Card>
+        ) : realTradingAccess === "LOCKED_EDUCATION" ? (
+          <Card className="text-center">
+            <div className="flex justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-2 text-ink-faint">
+                <Lock size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-[15px] font-semibold text-ink">{t("perpTrade.realTradingLockedTitle")}</p>
+            <p className="mt-1 text-[13px] text-ink-muted">{t("perpTrade.realTradingLockedEducationBody")}</p>
+            <Link
+              href={blockingStage ? getLessonHref(blockingStage.assetId) : getLessonHref(slug)}
+              className="mt-3 flex items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
+            >
+              <BookOpen size={14} />
+              {blockingStage
+                ? `${t("learning.startLearning")}: ${blockingStage.name}`
+                : t("learning.startLearning")}
+            </Link>
+          </Card>
+        ) : realTradingAccess === "LOCKED_NO_PRACTICE_TRADE" ? (
+          <Card className="text-center">
+            <div className="flex justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-2 text-ink-faint">
+                <Lock size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-[15px] font-semibold text-ink">{t("perpTrade.realTradingLockedPracticeTitle")}</p>
+            <p className="mt-1 text-[13px] text-ink-muted">{t("perpTrade.realTradingLockedPracticeBody")}</p>
+            <Link
+              href={`/asset/${slug}`}
+              className="mt-3 flex items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
+            >
+              {t("perpTrade.practiceInPaperTrading")}
+            </Link>
           </Card>
         ) : agentStatus !== "approved" ? (
           <Card>

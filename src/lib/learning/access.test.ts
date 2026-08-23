@@ -21,6 +21,7 @@ function progressFor(state: typeof defaultState) {
     // exercised investment-count-based access rules, so 0 is correct here.
     investmentsMade: 0,
     distinctAssetsInvested: 0,
+    practiceTradedAssetIds: [],
     achievements: state.achievements,
     lastActivityAt: state.lastActivityAt,
   });

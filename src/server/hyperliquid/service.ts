@@ -11,7 +11,9 @@
 import { getOrFetch, invalidate } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
 import { isTradableHyperliquidCoin, getAssetIdForHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
+import { isRealTradingUnlocked } from "@/lib/hyperliquid/real-trading-access";
 import { getAsset } from "@/lib/assets/catalog";
+import { getServerLearningProgress } from "@/server/repositories/learning-repository";
 import { getHyperliquidUniverse } from "./markets";
 import {
   fetchMetaAndAssetCtxs,
@@ -537,6 +539,7 @@ function invalidateAccountCache(address: string): void {
 }
 
 export async function submitHyperliquidExchangeAction(
+  userId: string,
   address: string,
   action: Record<string, unknown>,
   nonce: number,
@@ -594,6 +597,29 @@ export async function submitHyperliquidExchangeAction(
   }
 
   if (action.type === "order" && !isReduceOnlyOrder(action)) {
+    // Phase 7: real trading requires the same education gate Paper
+    // Trading's own BUY already enforces (see trading-service.ts) PLUS a
+    // completed practice trade of this same asset — see
+    // real-trading-access.ts, the one deliberate place this layer reads
+    // learning progress. Reduce-only (closing/reducing) orders skip this,
+    // same reasoning as the balance check just below: you can always exit
+    // a position you already hold, regardless of current unlock state.
+    const compassAssetId = getAssetIdForHyperliquidCoin(asset.coin);
+    if (!compassAssetId) {
+      // Defensive only — asset.coin already passed isTradableHyperliquidCoin
+      // above, so this reverse lookup should always resolve.
+      return { status: "rejected", reason: "unknown-coin", message: "This asset isn't available for trading" };
+    }
+    const progress = await getServerLearningProgress(userId);
+    if (!isRealTradingUnlocked(compassAssetId, progress)) {
+      const name = getAsset(compassAssetId)?.name ?? asset.coin;
+      return {
+        status: "rejected",
+        reason: "real-trading-locked",
+        message: `Real trading for ${name} isn't unlocked yet — complete its course, quiz, and a practice trade in Paper Trading first.`,
+      };
+    }
+
     const notional = extractOrderNotional(action);
     if (notional === null) {
       return { status: "rejected", reason: "invalid-request", message: "Invalid order parameters" };
