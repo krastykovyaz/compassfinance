@@ -106,6 +106,7 @@ export function HyperliquidAccountPanel() {
       setCloseExecutionState({
         stage: "done",
         result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
+        requestedSize: sizeUnits,
       });
       return;
     }
@@ -122,7 +123,7 @@ export function HyperliquidAccountPanel() {
       isTestnet,
     });
 
-    setCloseExecutionState({ stage: "done", result });
+    setCloseExecutionState({ stage: "done", result, requestedSize: sizeUnits });
     if (result.status !== "wallet-rejected" && result.status !== "rejected") {
       refresh();
     }

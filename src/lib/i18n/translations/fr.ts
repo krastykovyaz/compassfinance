@@ -309,6 +309,10 @@ const fr: Dictionary = {
     closePositionReduceOnly: "Réduction uniquement",
     closePositionSigning: "Approuvez dans votre portefeuille…",
     closePositionApproveFirst: "Autorisez d'abord le trading Hyperliquid sur la page BTC-PERP ou ETH-PERP, puis revenez gérer cette position.",
+    closePositionPartiallyFilled: "Partiellement exécuté",
+    closePositionPartialFillNotice: "Seule une partie de votre demande a été exécutée — votre position n'a été que partiellement réduite.",
+    closePositionRequested: "Demandé",
+    closePositionFilledAmount: "Exécuté",
   },
   perpTrade: {
     long: "Long",

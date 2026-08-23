@@ -309,6 +309,10 @@ const ru: Dictionary = {
     closePositionReduceOnly: "Только уменьшение",
     closePositionSigning: "Подтвердите в кошельке…",
     closePositionApproveFirst: "Сначала разрешите торговлю на Hyperliquid на странице BTC-PERP или ETH-PERP, затем вернитесь, чтобы управлять этой позицией.",
+    closePositionPartiallyFilled: "Исполнено частично",
+    closePositionPartialFillNotice: "Исполнена только часть заявки — позиция уменьшена лишь частично.",
+    closePositionRequested: "Запрошено",
+    closePositionFilledAmount: "Исполнено",
   },
   perpTrade: {
     long: "Лонг",

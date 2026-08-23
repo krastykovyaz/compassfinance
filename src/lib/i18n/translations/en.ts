@@ -312,6 +312,10 @@ const en = {
     closePositionReduceOnly: "Reduce Only",
     closePositionSigning: "Approve in your wallet…",
     closePositionApproveFirst: "Approve Hyperliquid Trading on the BTC-PERP or ETH-PERP page first, then come back to manage this position.",
+    closePositionPartiallyFilled: "Partially filled",
+    closePositionPartialFillNotice: "Only part of your request was filled — your position was only partially reduced.",
+    closePositionRequested: "Requested",
+    closePositionFilledAmount: "Filled",
   },
   perpTrade: {
     long: "Long",

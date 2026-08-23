@@ -10,17 +10,22 @@
 // ResultBanner from perp-order-preview-sheet.tsx so a fill/reject/
 // wallet-rejection reads identically to opening a position.
 
-import { X, Loader2, TriangleAlert } from "lucide-react";
+import { TriangleAlert, X, Loader2 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { ResultBanner } from "./perp-order-preview-sheet";
 import type { HyperliquidPosition } from "@/lib/hyperliquid/hyperliquid-types";
-import type { PerpOrderExecutionResult } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import { checkPartialFill, type PerpOrderExecutionResult } from "@/lib/hyperliquid/hyperliquid-order-signer";
 
 export type CloseExecutionUiState =
   | { stage: "idle" }
   | { stage: "signing" | "submitting" }
-  | { stage: "done"; result: PerpOrderExecutionResult };
+  // requestedSize travels with the result purely for display — comparing
+  // it against a "filled" result's own totalSize (via checkPartialFill)
+  // is what detects a partial fill below. Never touches the signing/
+  // submission/reduceOnly logic, which already ran by the time this
+  // state is reached.
+  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number };
 
 const CLOSE_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
 
@@ -29,6 +34,55 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <span className="text-[13px] text-ink-muted">{label}</span>
       <span className="text-[13px] font-medium text-ink">{value}</span>
+    </div>
+  );
+}
+
+/** Renders in place of the shared ResultBanner ONLY for the specific case
+ * of a "filled" result whose totalSize came in short of what was
+ * requested — every other status (wallet-rejected, resting, rejected,
+ * hyperliquid-rejected, network-failure) still goes through the exact
+ * same shared ResultBanner unchanged, so none of that classification/
+ * error-handling logic is touched by this. */
+function PartialFillBanner({
+  coin,
+  requestedSize,
+  filledSize,
+  remainingSize,
+}: {
+  coin: string;
+  requestedSize: number;
+  filledSize: number;
+  remainingSize: number;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-3 space-y-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <TriangleAlert size={14} className="shrink-0" />
+        <span>{t("hyperliquidAccount.closePositionPartiallyFilled")}</span>
+      </div>
+      <p>{t("hyperliquidAccount.closePositionPartialFillNotice")}</p>
+      <div className="space-y-1 pt-1">
+        <div className="flex items-center justify-between">
+          <span>{t("hyperliquidAccount.closePositionRequested")}</span>
+          <span className="font-medium">
+            {formatNumber(requestedSize, 5)} {coin}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span>{t("hyperliquidAccount.closePositionFilledAmount")}</span>
+          <span className="font-medium">
+            {formatNumber(filledSize, 5)} {coin}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span>{t("hyperliquidAccount.closePositionRemaining")}</span>
+          <span className="font-medium">
+            {formatNumber(remainingSize, 5)} {coin}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -62,9 +116,16 @@ export function ClosePositionModal({
   const isActive = executionState.stage !== "idle" && executionState.stage !== "done";
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
+  const requestedSize = isDone ? executionState.requestedSize : 0;
   const maxSize = Math.abs(position.size);
   const parsedSize = Number(sizeInput) || 0;
   const isValidSize = parsedSize > 0 && parsedSize <= maxSize;
+
+  // checkPartialFill returns null for every status except "filled" —
+  // every other status (wallet-rejected, resting, rejected,
+  // hyperliquid-rejected, network-failure) is untouched and still
+  // rendered by the shared ResultBanner exactly as before.
+  const partialFill = result ? checkPartialFill(result, requestedSize, maxSize) : null;
 
   function handleClose() {
     if (isActive) return; // don't allow closing mid-signature/submission
@@ -171,7 +232,16 @@ export function ClosePositionModal({
           </div>
         ) : null}
 
-        {result ? <ResultBanner result={result} /> : null}
+        {partialFill?.isPartial ? (
+          <PartialFillBanner
+            coin={position.coin}
+            requestedSize={requestedSize}
+            filledSize={partialFill.filledSize}
+            remainingSize={partialFill.remainingSize}
+          />
+        ) : result ? (
+          <ResultBanner result={result} />
+        ) : null}
 
         {!isDone ? (
           <button
