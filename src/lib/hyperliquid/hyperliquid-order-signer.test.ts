@@ -13,6 +13,7 @@ import {
   buildMarketOrderAction,
   createHyperliquidWalletAdapter,
   signAndSubmitPerpOrder,
+  signingErrorDetail,
   SLIPPAGE_TOLERANCE,
 } from "./hyperliquid-order-signer";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
@@ -50,6 +51,22 @@ describe("computeSlippageLimitPrice", () => {
   it("accepts a custom slippage tolerance", () => {
     expect(computeSlippageLimitPrice(100, "long", 0.05)).toBeCloseTo(105, 5);
     expect(computeSlippageLimitPrice(100, "short", 0.05)).toBeCloseTo(95, 5);
+  });
+});
+
+describe("signingErrorDetail", () => {
+  it("unwraps AbstractWalletError's cause to surface the wallet's own real error message", () => {
+    const walletCrash = new TypeError("undefined is not a function");
+    const wrapped = new Error("Failed to sign the typed data using the wallet", { cause: walletCrash });
+    expect(signingErrorDetail(wrapped)).toBe("undefined is not a function");
+  });
+
+  it("falls back to the error's own message when there's no cause", () => {
+    expect(signingErrorDetail(new Error("plain failure"))).toBe("plain failure");
+  });
+
+  it("stringifies a non-Error thrown value rather than crashing on it", () => {
+    expect(signingErrorDetail("raw string throw")).toBe("raw string throw");
   });
 });
 
@@ -235,6 +252,25 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
 
     expect(result).toEqual({ status: "wallet-rejected" });
     expect(signL1Action).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the real underlying error message (not a generic one) when signing the leverage update fails for a reason other than user-rejection — the reported bug", async () => {
+    signL1Action.mockRejectedValueOnce(
+      new Error("Failed to sign the typed data using the wallet", {
+        cause: new TypeError("undefined is not a function"),
+      })
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await signAndSubmitPerpOrder(BASE_PARAMS);
+
+    expect(result).toEqual({
+      status: "rejected",
+      reason: "invalid-request",
+      message: "Couldn't sign the leverage update: undefined is not a function",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

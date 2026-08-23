@@ -41,6 +41,17 @@ export const SLIPPAGE_TOLERANCE = 0.01;
 // Pure builders — no wallet, no fetch. Directly testable.
 // ---------------------------------------------------------------------------
 
+/** Real, diagnosable detail for a failed signTypedData call — never just a
+ * generic "signing failed". @nktkas/hyperliquid wraps the wallet's own
+ * error in AbstractWalletError.cause, so unwrap that first when present
+ * (it's the wallet's own message, e.g. a real MetaMask error) before
+ * falling back to the outer error's own message. */
+export function signingErrorDetail(err: unknown): string {
+  const cause = err instanceof Error ? (err.cause ?? err) : err;
+  if (cause instanceof Error) return cause.message;
+  return String(cause);
+}
+
 export function computeSlippageLimitPrice(
   markPrice: number,
   side: PerpSide,
@@ -224,7 +235,11 @@ export async function signAndSubmitPerpOrder(params: {
     });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    return { status: "rejected", reason: "invalid-request", message: "Couldn't sign the leverage update." };
+    return {
+      status: "rejected",
+      reason: "invalid-request",
+      message: `Couldn't sign the leverage update: ${signingErrorDetail(err)}`,
+    };
   }
 
   params.onStageChange?.("submitting-leverage");
@@ -257,7 +272,11 @@ export async function signAndSubmitPerpOrder(params: {
     });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    return { status: "rejected", reason: "invalid-request", message: "Couldn't sign the order." };
+    return {
+      status: "rejected",
+      reason: "invalid-request",
+      message: `Couldn't sign the order: ${signingErrorDetail(err)}`,
+    };
   }
 
   params.onStageChange?.("submitting-order");
