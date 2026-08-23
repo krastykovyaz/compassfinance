@@ -274,7 +274,7 @@ const fr: Dictionary = {
   },
   portfolio: {
     portfolio: "Portefeuille",
-    totalPortfolioValue: "Valeur totale du portefeuille",
+    totalPortfolioValue: "Valeur du portefeuille d'entraînement",
     practicePosition: "Position d'entraînement",
     holdings: "Positions détenues",
     view: "Voir",

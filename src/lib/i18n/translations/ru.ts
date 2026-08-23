@@ -274,7 +274,7 @@ const ru: Dictionary = {
   },
   portfolio: {
     portfolio: "Портфель",
-    totalPortfolioValue: "Общая стоимость портфеля",
+    totalPortfolioValue: "Стоимость учебного портфеля",
     practicePosition: "Учебная позиция",
     holdings: "Активы",
     view: "Просмотр",

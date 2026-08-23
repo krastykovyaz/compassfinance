@@ -277,7 +277,7 @@ const en = {
   },
   portfolio: {
     portfolio: "Portfolio",
-    totalPortfolioValue: "Total portfolio value",
+    totalPortfolioValue: "Paper portfolio value",
     practicePosition: "Practice position",
     holdings: "Holdings",
     view: "View",
