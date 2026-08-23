@@ -186,6 +186,45 @@ describe("correctWalletConnectChainIdIfDesynced", () => {
     expect(corrected).not.toBe(270689);
     expect(corrected).not.toBe(42161); // wasn't approved here — never invented
   });
+
+  // The actual reproduced bug: the outer wrapper's own chainId was
+  // already correct/irrelevant — eth_chainId is answered by this
+  // separate, deeper object (signer.rpcProviders.eip155), confirmed by
+  // reading @walletconnect/universal-provider's own source. Fixing only
+  // the outer property (as an earlier version of this fix did) left
+  // eth_chainId still reporting the stale/bad value live — this is the
+  // regression test for that.
+  it("also corrects the deeper signer.rpcProviders.eip155.chainId that eth_chainId is actually answered from", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 42161, // outer wrapper already fine
+      session: {
+        namespaces: { eip155: { chains: ["eip155:1", "eip155:10", "eip155:137", "eip155:8453", "eip155:42161"] } },
+      },
+      signer: { rpcProviders: { eip155: { chainId: 270689 } } }, // the real, deeper desync
+    } as unknown as Eip1193Provider;
+
+    correctWalletConnectChainIdIfDesynced(provider);
+
+    const inner = (provider as unknown as { signer: { rpcProviders: { eip155: { chainId: number } } } }).signer
+      .rpcProviders.eip155;
+    expect(inner.chainId).toBe(42161);
+  });
+
+  it("leaves the deeper property untouched when it already agrees with the session, even if it's absent/undefined on a non-WalletConnect-style provider", () => {
+    const provider = {
+      request: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      chainId: 42161,
+      session: { namespaces: { eip155: { chains: ["eip155:42161"] } } },
+      // no `signer` property at all — should not throw
+    } as unknown as Eip1193Provider;
+
+    expect(() => correctWalletConnectChainIdIfDesynced(provider)).not.toThrow();
+  });
 });
 
 describe("approveAgent — orchestration", () => {

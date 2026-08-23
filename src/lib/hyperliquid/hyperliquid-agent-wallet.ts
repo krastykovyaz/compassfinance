@@ -79,39 +79,55 @@ export function buildApproveAgentAction(params: {
 
 export type ApproveAgentResult = { status: "wallet-rejected" } | HyperliquidExchangeResult;
 
-/** WORKAROUND for a verified bug in @walletconnect/ethereum-provider (the
- * installed version at time of writing: 2.23.10). Reproduced live and
- * confirmed from the SDK's own source: it tracks an internal `chainId`
- * separate from the session it negotiates, and uses that internal value
- * to scope every relayed request — including the actual signing request,
- * not just anything CompassFinance puts in a payload. On a real wallet,
- * that internal value was found stuck at a number OUTSIDE the session's
- * own approved chain list entirely, while the session itself correctly
- * listed the wallet's real active chain (confirmed independently by the
- * wallet's own UI) among its approved chains. There is no supported API
- * to fix this from outside the SDK — this directly corrects the internal
- * property, which is not part of the public Eip1193Provider contract, so
- * it's narrowly scoped to exactly this one desync condition and left
- * heavily commented. Remove if a future SDK release fixes this upstream.
- * A no-op for the common case (injected wallets, or a WalletConnect
- * session whose internal state already agrees with its own session). */
+/** WORKAROUND for a verified bug spanning @walletconnect/ethereum-provider
+ * and @walletconnect/universal-provider (installed versions at time of
+ * writing: both 2.23.10). Reproduced live and confirmed by reading both
+ * packages' own source, not guessed:
+ *
+ * - The OUTER EthereumProvider wraps a `signer` (a UniversalProvider
+ *   instance) and scopes every relayed request — including the actual
+ *   signing request — via ITS OWN `this.chainId`
+ *   (`this.signer.request(t, this.formatChainId(this.chainId), e)`).
+ * - `eth_chainId` specifically, though, is answered by a DIFFERENT,
+ *   deeper object: `signer.rpcProviders.eip155` (built once per session
+ *   in UniversalProvider's createProviders()), whose own `request()`
+ *   directly returns `parseInt(this.getDefaultChain())` — reading ITS
+ *   OWN separate `chainId` property, not the outer wrapper's.
+ *
+ * On a real wallet, both of these were found holding a value OUTSIDE the
+ * session's own approved chain list entirely (reproduced: 270689, while
+ * the session's real namespace only ever approved {1, 10, 137, 8453,
+ * 42161}), even though the wallet's own UI confirmed its real active
+ * chain (42161) was among the approved set the whole time. There is no
+ * supported public API to fix this from outside the SDK — this directly
+ * corrects both internal properties, neither of which is part of the
+ * public Eip1193Provider contract, so this is narrowly scoped to exactly
+ * this one desync condition and left heavily commented. Remove if a
+ * future SDK release fixes this upstream. A no-op for the common case
+ * (injected wallets, or a WalletConnect session whose internal state
+ * already agrees with its own session). */
 export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider): void {
   const wc = provider as unknown as {
     session?: { namespaces?: Record<string, { chains?: string[] }> };
     chainId?: number;
+    signer?: { rpcProviders?: { eip155?: { chainId?: number } } };
   };
   const chains = wc.session?.namespaces?.eip155?.chains;
   if (!chains || chains.length === 0) return; // not WalletConnect, or no session yet
-
-  if (wc.chainId !== undefined && chains.includes(`eip155:${wc.chainId}`)) return; // already consistent
 
   // Prefer Arbitrum One (this app's primary chain) if it's approved;
   // otherwise fall back to whichever approved chain comes first — either
   // way, only ever a chain the session itself already approved.
   const preferred = chains.find((c) => c === "eip155:42161") ?? chains[0];
   const corrected = Number(preferred.split(":")[1]);
-  if (Number.isFinite(corrected)) {
+  if (!Number.isFinite(corrected)) return;
+
+  if (wc.chainId === undefined || !chains.includes(`eip155:${wc.chainId}`)) {
     wc.chainId = corrected;
+  }
+  const inner = wc.signer?.rpcProviders?.eip155;
+  if (inner && (inner.chainId === undefined || !chains.includes(`eip155:${inner.chainId}`))) {
+    inner.chainId = corrected;
   }
 }
 
