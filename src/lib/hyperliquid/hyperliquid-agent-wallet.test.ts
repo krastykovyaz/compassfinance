@@ -180,7 +180,7 @@ describe("approveAgent — orchestration", () => {
       status: "rejected",
       reason: "invalid-request",
       message:
-        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539 [sent chainId=0xa4b1, raw eth_chainId decimal=42161]",
+        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539 [sent=0xa4b1, eth_chainId=42161, isWC=false, wcChains=undefined]",
     });
   });
 

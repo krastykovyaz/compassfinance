@@ -107,13 +107,18 @@ export async function approveAgent(params: {
     signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    // Temporary extra detail (sent chainId + wallet's raw eth_chainId) to
-    // diagnose a live MetaMask chainId-mismatch report where the numbers
-    // shown didn't add up to a real hex conversion — remove once resolved.
+    // Temporary extra detail to diagnose a live chainId-mismatch report
+    // where the numbers shown didn't add up to a real hex conversion —
+    // remove once resolved. Dumps whatever WalletConnect actually
+    // negotiated (if this is a WalletConnect session at all) alongside
+    // the derived eth_chainId, so the next failure shows the real
+    // session data instead of just the number we computed from it.
+    const wcSession = (params.provider as { session?: { namespaces?: Record<string, { chains?: string[] }> } })
+      .session;
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent chainId=${action.signatureChainId}, raw eth_chainId decimal=${chainId}]`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [sent=${action.signatureChainId}, eth_chainId=${chainId}, isWC=${!!wcSession}, wcChains=${JSON.stringify(wcSession?.namespaces?.eip155?.chains)}]`,
     };
   }
 
