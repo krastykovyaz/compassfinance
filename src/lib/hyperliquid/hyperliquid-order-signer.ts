@@ -44,11 +44,18 @@ export const SLIPPAGE_TOLERANCE = 0.01;
 /** Real, diagnosable detail for a failed signTypedData call — never just a
  * generic "signing failed". @nktkas/hyperliquid wraps the wallet's own
  * error in AbstractWalletError.cause, so unwrap that first when present
- * (it's the wallet's own message, e.g. a real MetaMask error) before
- * falling back to the outer error's own message. */
+ * (it's the wallet's own message, e.g. a real MetaMask/Coinbase Wallet
+ * error) before falling back to the outer error's own message. Many
+ * wallet providers reject with a plain {message} object rather than a
+ * real Error instance (confirmed: Coinbase Wallet's chainId-mismatch
+ * rejection is exactly this shape) — String(plainObject) would just give
+ * "[object Object]", so a string `.message` property is checked first. */
 export function signingErrorDetail(err: unknown): string {
   const cause = err instanceof Error ? (err.cause ?? err) : err;
   if (cause instanceof Error) return cause.message;
+  if (cause && typeof cause === "object" && typeof (cause as { message?: unknown }).message === "string") {
+    return (cause as { message: string }).message;
+  }
   return String(cause);
 }
 

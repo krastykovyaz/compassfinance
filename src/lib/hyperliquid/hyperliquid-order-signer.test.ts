@@ -68,6 +68,12 @@ describe("signingErrorDetail", () => {
   it("stringifies a non-Error thrown value rather than crashing on it", () => {
     expect(signingErrorDetail("raw string throw")).toBe("raw string throw");
   });
+
+  it("reads .message off a plain (non-Error) rejection object — the reported bug: Coinbase Wallet's chainId-mismatch rejection is shaped exactly like this, and String() on it alone gives '[object Object]'", () => {
+    const walletCrash = { message: "Active chainId is 0xa4b1 but received 0x539" };
+    const wrapped = new Error("Failed to sign the typed data using the wallet", { cause: walletCrash });
+    expect(signingErrorDetail(wrapped)).toBe("Active chainId is 0xa4b1 but received 0x539");
+  });
 });
 
 describe("nextNonce — strictly increasing across two signed actions", () => {
