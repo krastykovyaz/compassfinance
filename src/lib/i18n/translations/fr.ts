@@ -344,6 +344,7 @@ const fr: Dictionary = {
     orderFilled: "Ordre exécuté",
     orderSubmitted: "Ordre soumis",
     unconfirmed: "Impossible de confirmer que ceci a atteint Hyperliquid — vérifiez vos positions avant de réessayer.",
+    partialFillNotice: "Seule une partie de votre ordre a été exécutée — le reste ne l'a pas été. Votre position est plus petite que demandé.",
     approveAgentTitle: "Autoriser le trading Hyperliquid",
     approveAgentSubtitle: "Autorisation unique dans votre portefeuille — les prochaines transactions de cette session n'auront plus besoin d'une signature à chaque fois.",
     approveAgentButton: "Autoriser le trading",

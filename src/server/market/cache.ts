@@ -79,3 +79,12 @@ export function clearMarketCache(): void {
   store.clear();
   inFlight.clear();
 }
+
+/** Busts a single cached key immediately, rather than waiting out its
+ * TTL — for a write path where something just genuinely changed
+ * upstream (e.g. a real Hyperliquid order/leverage submission) and the
+ * next read for that same key must not serve stale pre-write data. */
+export function invalidate(key: string): void {
+  store.delete(key);
+  inFlight.delete(key);
+}

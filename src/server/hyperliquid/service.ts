@@ -8,7 +8,7 @@
 // no mock Hyperliquid provider anywhere in this codebase, so "disabled" or
 // "upstream failed" both mean the same honest "unavailable" to the caller.
 
-import { getOrFetch } from "@/server/market/cache";
+import { getOrFetch, invalidate } from "@/server/market/cache";
 import { isHyperliquidEnabled } from "./config";
 import { isTradableHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
 import { getHyperliquidUniverse } from "./markets";
@@ -508,6 +508,21 @@ function classifyExchangeResponse(raw: unknown): HyperliquidExchangeResult {
   return { status: "hyperliquid-rejected", message: "Unrecognized order status from Hyperliquid" };
 }
 
+/** Busts the cached account/orders/fills views for `address` — called
+ * after a real order/leverage submission reaches Hyperliquid, whatever
+ * the outcome. Without this, getHyperliquidAccount's 10s getOrFetch
+ * cache could serve pre-trade data to the client-side refresh() call
+ * that runs immediately after a trade completes, making a genuinely
+ * successful (or ambiguous network-failure) trade look like it never
+ * happened for up to that whole 10s window. Never called for a
+ * pre-flight rejection (disabled/invalid/insufficient-balance/etc) —
+ * those never reach Hyperliquid, so nothing upstream changed. */
+function invalidateAccountCache(address: string): void {
+  invalidate(`hl:account:${address}`);
+  invalidate(`hl:orders:${address}`);
+  invalidate(`hl:fills:${address}`);
+}
+
 export async function submitHyperliquidExchangeAction(
   address: string,
   action: Record<string, unknown>,
@@ -596,6 +611,7 @@ export async function submitHyperliquidExchangeAction(
 
   try {
     const result = await postExchange<unknown>({ action, nonce, signature });
+    invalidateAccountCache(address);
     if (!result.ok) {
       // Could not confirm Hyperliquid ever received/processed this —
       // never reported as a hard failure, since it may have gone through.
@@ -603,6 +619,7 @@ export async function submitHyperliquidExchangeAction(
     }
     return classifyExchangeResponse(result.data);
   } catch (err) {
+    invalidateAccountCache(address);
     const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
     return { status: "network-failure", message };
   }

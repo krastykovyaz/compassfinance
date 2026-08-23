@@ -398,7 +398,7 @@ describe("closingOrderParamsForPosition — pure derivation, never user-editable
   });
 });
 
-describe("checkPartialFill — Manage Position's partial-vs-full fill detection", () => {
+describe("checkPartialFill — partial-vs-full fill detection (opening and closing/reducing)", () => {
   it("returns null for every non-'filled' status — nothing to compare, existing result handling covers these", () => {
     expect(checkPartialFill({ status: "wallet-rejected" }, 1, 1)).toBeNull();
     expect(checkPartialFill({ status: "resting", orderId: 1 }, 1, 1)).toBeNull();
@@ -442,6 +442,14 @@ describe("checkPartialFill — Manage Position's partial-vs-full fill detection"
     // Remaining should be 1.5 (2.0 - 0.5), not 0 and not based on the request alone.
     const result = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.5, avgPrice: 60000 }, 0.5, 2.0);
     expect(result).toEqual({ isPartial: false, filledSize: 0.5, remainingSize: 1.5 });
+  });
+
+  it("omits remainingSize entirely when positionSizeBeforeClose isn't given — the OPENING case, where there's no prior position being reduced", () => {
+    const partial = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.4, avgPrice: 60000 }, 0.6);
+    expect(partial).toEqual({ isPartial: true, filledSize: 0.4, remainingSize: undefined });
+
+    const full = checkPartialFill({ status: "filled", orderId: 1, totalSize: 0.6, avgPrice: 60000 }, 0.6);
+    expect(full).toEqual({ isPartial: false, filledSize: 0.6, remainingSize: undefined });
   });
 });
 

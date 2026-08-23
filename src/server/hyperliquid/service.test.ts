@@ -881,4 +881,75 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       expect(postExchange).not.toHaveBeenCalled();
     });
   });
+
+  describe("post-trade cache invalidation (Phase 6 audit fix)", () => {
+    // Without this, getHyperliquidAccount's 10s getOrFetch cache could
+    // serve pre-trade data to the client-side refresh() call that runs
+    // immediately after a trade completes — a genuinely successful order
+    // could look like it never happened for up to 10s. Verified against
+    // the REAL cache module (clearMarketCache() only resets it between
+    // tests, not mocked), so this is a real integration check, not just
+    // asserting a function was called.
+    it("a successful order submission busts the cached account view for that address", async () => {
+      mockAccountBalance("100000");
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+      await getHyperliquidAccount("0xabc"); // populate the cache
+      expect(fetchClearinghouseState).toHaveBeenCalledTimes(1);
+
+      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      await getHyperliquidAccount("0xabc"); // must NOT be served stale
+      expect(fetchClearinghouseState.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("does NOT bust the cache for a pre-flight rejection that never reached Hyperliquid", async () => {
+      mockAccountBalance("1"); // triggers the insufficient-balance pre-flight rejection
+
+      await getHyperliquidAccount("0xabc"); // populate the cache — 1 call
+      const result = await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+      expect(result.status).toBe("rejected");
+      expect(postExchange).not.toHaveBeenCalled();
+      // The pre-flight balance check itself always makes its own FRESH,
+      // uncached fetchClearinghouseState call (by design — see its own
+      // comment) — that's call #2, unrelated to the getOrFetch cache this
+      // test is actually about. What matters is call #3 below.
+      const callsAfterRejection = fetchClearinghouseState.mock.calls.length;
+
+      await getHyperliquidAccount("0xabc"); // should still be served from cache — no 3rd call
+      expect(fetchClearinghouseState.mock.calls.length).toBe(callsAfterRejection);
+    });
+
+    it("busts the cache even on a network-failure — the outcome is ambiguous, so stale data must never be trusted either", async () => {
+      mockAccountBalance("100000");
+      postExchange.mockResolvedValue({ ok: false, reason: "network_error", message: "timed out" });
+
+      await getHyperliquidAccount("0xabc");
+      expect(fetchClearinghouseState).toHaveBeenCalledTimes(1);
+
+      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      await getHyperliquidAccount("0xabc");
+      expect(fetchClearinghouseState.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("also busts the cached open-orders and fills views, not just the account view", async () => {
+      mockAccountBalance("100000");
+      fetchOpenOrders.mockResolvedValue({ ok: true, data: [] });
+      fetchUserFills.mockResolvedValue({ ok: true, data: [] });
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
+
+      await getHyperliquidOpenOrders("0xabc");
+      await getHyperliquidUserFills("0xabc", 20);
+      expect(fetchOpenOrders).toHaveBeenCalledTimes(1);
+      expect(fetchUserFills).toHaveBeenCalledTimes(1);
+
+      await submitHyperliquidExchangeAction("0xabc", ORDER_ACTION, NONCE, SIGNATURE);
+
+      await getHyperliquidOpenOrders("0xabc");
+      await getHyperliquidUserFills("0xabc", 20);
+      expect(fetchOpenOrders.mock.calls.length).toBeGreaterThan(1);
+      expect(fetchUserFills.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
 });

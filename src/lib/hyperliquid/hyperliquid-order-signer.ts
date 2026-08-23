@@ -352,22 +352,25 @@ export function closingOrderParamsForPosition(positionSize: number): { side: Per
   return { side: positionSize >= 0 ? "short" : "long", sizeUnits: Math.abs(positionSize) };
 }
 
-export type PartialFillCheck = { isPartial: boolean; filledSize: number; remainingSize: number };
+export type PartialFillCheck = { isPartial: boolean; filledSize: number; remainingSize?: number };
 
-/** Pure comparison of what a Manage Position close/reduce actually
- * requested against what Hyperliquid's response reports as filled — the
- * one place this decides "was this partial", so the UI never has to
- * duplicate the comparison. Non-"filled" results (rejected, resting,
+/** Pure comparison of what a real order (opening OR closing/reducing)
+ * actually requested against what Hyperliquid's response reports as
+ * filled — the one place this decides "was this partial", so no caller
+ * duplicates the comparison. Non-"filled" results (rejected, resting,
  * wallet-rejected, network-failure) have no fill amount to compare at
  * all and return null; the caller already has dedicated handling for
  * those from the existing result classification. `epsilon` absorbs
  * formatSize's tick-rounding noise, not a real business tolerance —
  * without it, a fully-filled order could round-trip to a totalSize a
- * hair under what was requested and get mislabeled as partial. */
+ * hair under what was requested and get mislabeled as partial.
+ * `positionSizeBeforeClose` only makes sense for a close/reduce (the
+ * resulting remaining position size) — omit it when opening a position,
+ * where there's no prior position being reduced. */
 export function checkPartialFill(
   result: PerpOrderExecutionResult,
   requestedSize: number,
-  positionSizeBeforeClose: number,
+  positionSizeBeforeClose?: number,
   epsilon = 1e-8
 ): PartialFillCheck | null {
   if (result.status !== "filled") return null;
@@ -375,6 +378,6 @@ export function checkPartialFill(
   return {
     isPartial: requestedSize - filledSize > epsilon,
     filledSize,
-    remainingSize: Math.max(positionSizeBeforeClose - filledSize, 0),
+    remainingSize: positionSizeBeforeClose !== undefined ? Math.max(positionSizeBeforeClose - filledSize, 0) : undefined,
   };
 }

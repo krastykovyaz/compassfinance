@@ -13,12 +13,13 @@
 // design. A reload loses the agent and the user re-approves; this is the
 // intended trade-off for never persisting a signing key anywhere.
 
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveAgent as approveAgentAction,
   createAgentSigner,
   generateAgentKeypair,
 } from "./hyperliquid-agent-wallet";
+import { useWallet } from "@/lib/wallet/wallet-provider";
 import type { AbstractWallet } from "@nktkas/hyperliquid/signing";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
 import type { ApproveAgentResult } from "./hyperliquid-agent-wallet";
@@ -45,6 +46,7 @@ function describeApprovalFailure(result: ApproveAgentResult): string {
 }
 
 export function HyperliquidAgentProvider({ children }: { children: ReactNode }) {
+  const { address: connectedAddress } = useWallet();
   const [agentStatus, setAgentStatus] = useState<HyperliquidAgentStatus>("none");
   const [agentAddress, setAgentAddress] = useState<`0x${string}` | null>(null);
   const [agentWallet, setAgentWallet] = useState<AbstractWallet | null>(null);
@@ -57,8 +59,30 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
     setErrorMessage(null);
   }, []);
 
+  // An approved agent is only ever authorized to trade on behalf of
+  // whichever address actually signed its approveAgent action — but
+  // agentStatus alone (not that address) is what the trading UI gates
+  // on. Left unguarded, switching wallet accounts or disconnecting/
+  // reconnecting a different wallet — without a full page reload — would
+  // leave a stale agent in place: the UI would show the new address and
+  // its balance, but a submitted trade would actually execute on the
+  // OLD address's real Hyperliquid account, since Hyperliquid recovers
+  // the true signer from the agent's own signature, not from whatever
+  // address our own request happens to mention. Reset whenever the
+  // connected address changes (including to/from disconnected).
+  const lastAddressRef = useRef(connectedAddress);
+  const addressGenerationRef = useRef(0);
+  useEffect(() => {
+    if (lastAddressRef.current !== connectedAddress) {
+      lastAddressRef.current = connectedAddress;
+      addressGenerationRef.current += 1;
+      reset();
+    }
+  }, [connectedAddress, reset]);
+
   const approve = useCallback(
     async (params: { provider: Eip1193Provider; address: string; isTestnet: boolean }) => {
+      const generation = addressGenerationRef.current;
       setAgentStatus("approving");
       setErrorMessage(null);
 
@@ -69,6 +93,14 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
         agentAddress: keypair.address,
         isTestnet: params.isTestnet,
       });
+
+      // The connected address changed while this approval was in flight
+      // (e.g. the user switched accounts mid-signature) — its result now
+      // belongs to a master account that's no longer the connected one.
+      // Discard it rather than applying an approval for the wrong
+      // address; the reset the address-change effect already ran stays
+      // in effect.
+      if (addressGenerationRef.current !== generation) return;
 
       if (
         result.status === "wallet-rejected" ||

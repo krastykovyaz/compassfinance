@@ -12,12 +12,18 @@ import { X, Loader2, TriangleAlert, CheckCircle2 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import type { PerpOrderPreview } from "@/lib/hyperliquid/perp-order-calculator";
+import { checkPartialFill } from "@/lib/hyperliquid/hyperliquid-order-signer";
 import type { PerpOrderExecutionResult, PerpOrderExecutionStage } from "@/lib/hyperliquid/hyperliquid-order-signer";
 
 export type PerpOrderExecutionUiState =
   | { stage: "idle" }
   | { stage: PerpOrderExecutionStage }
-  | { stage: "done"; result: PerpOrderExecutionResult };
+  // requestedSize travels with the result purely for display — comparing
+  // it against a "filled" result's own totalSize (via checkPartialFill)
+  // is what detects a partial fill below. Never touches the signing/
+  // submission logic, which already ran by the time this state is
+  // reached.
+  | { stage: "done"; result: PerpOrderExecutionResult; requestedSize: number };
 
 function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
@@ -46,6 +52,12 @@ export function PerpOrderPreviewSheet({
   const isActive = executionState.stage !== "idle" && executionState.stage !== "done";
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
+  const requestedSize = isDone ? executionState.requestedSize : 0;
+  // No positionSizeBeforeClose — this is an OPEN, not a close/reduce, so
+  // there's no prior position size for a "remaining position" row to be
+  // relative to. checkPartialFill returns null for every non-"filled"
+  // status — those keep going through ResultBanner exactly as before.
+  const partialFill = result ? checkPartialFill(result, requestedSize) : null;
 
   function handleClose() {
     if (isActive) return; // don't allow closing mid-signature/submission
@@ -108,7 +120,16 @@ export function PerpOrderPreviewSheet({
           </div>
         ) : null}
 
-        {result ? <ResultBanner result={result} /> : null}
+        {partialFill?.isPartial ? (
+          <PartialFillBanner
+            coin={coin}
+            requestedSize={requestedSize}
+            filledSize={partialFill.filledSize}
+            noticeKey="perpTrade.partialFillNotice"
+          />
+        ) : result ? (
+          <ResultBanner result={result} />
+        ) : null}
 
         {!isDone ? (
           <button
@@ -193,6 +214,63 @@ export function ResultBanner({ result }: { result: PerpOrderExecutionResult }) {
     <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
       <TriangleAlert size={14} className="mt-0.5 shrink-0" />
       <span>{result.message}</span>
+    </div>
+  );
+}
+
+/** Renders in place of ResultBanner ONLY for a "filled" result whose
+ * totalSize came in short of what was requested — every other status
+ * (wallet-rejected, resting, rejected, hyperliquid-rejected, network-
+ * failure) still goes through ResultBanner unchanged, so none of that
+ * classification/error-handling logic is touched by this. Shared by
+ * both opening (this file) and closing/reducing (close-position-modal.tsx)
+ * — `remainingSize` is only meaningful for a close (omit it, as the open
+ * flow does, when there's no prior position being reduced) and
+ * `noticeKey` lets each caller phrase the "why this matters" line for
+ * its own context. */
+export function PartialFillBanner({
+  coin,
+  requestedSize,
+  filledSize,
+  remainingSize,
+  noticeKey,
+}: {
+  coin: string;
+  requestedSize: number;
+  filledSize: number;
+  remainingSize?: number;
+  noticeKey: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-3 space-y-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <TriangleAlert size={14} className="shrink-0" />
+        <span>{t("hyperliquidAccount.closePositionPartiallyFilled")}</span>
+      </div>
+      <p>{t(noticeKey)}</p>
+      <div className="space-y-1 pt-1">
+        <div className="flex items-center justify-between">
+          <span>{t("hyperliquidAccount.closePositionRequested")}</span>
+          <span className="font-medium">
+            {formatNumber(requestedSize, 5)} {coin}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span>{t("hyperliquidAccount.closePositionFilledAmount")}</span>
+          <span className="font-medium">
+            {formatNumber(filledSize, 5)} {coin}
+          </span>
+        </div>
+        {remainingSize !== undefined ? (
+          <div className="flex items-center justify-between">
+            <span>{t("hyperliquidAccount.closePositionRemaining")}</span>
+            <span className="font-medium">
+              {formatNumber(remainingSize, 5)} {coin}
+            </span>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

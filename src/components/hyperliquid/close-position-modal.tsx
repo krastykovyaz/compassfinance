@@ -13,7 +13,7 @@
 import { TriangleAlert, X, Loader2 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/locale-provider";
-import { ResultBanner } from "./perp-order-preview-sheet";
+import { ResultBanner, PartialFillBanner } from "./perp-order-preview-sheet";
 import type { HyperliquidPosition } from "@/lib/hyperliquid/hyperliquid-types";
 import { checkPartialFill, type PerpOrderExecutionResult } from "@/lib/hyperliquid/hyperliquid-order-signer";
 
@@ -34,55 +34,6 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <span className="text-[13px] text-ink-muted">{label}</span>
       <span className="text-[13px] font-medium text-ink">{value}</span>
-    </div>
-  );
-}
-
-/** Renders in place of the shared ResultBanner ONLY for the specific case
- * of a "filled" result whose totalSize came in short of what was
- * requested — every other status (wallet-rejected, resting, rejected,
- * hyperliquid-rejected, network-failure) still goes through the exact
- * same shared ResultBanner unchanged, so none of that classification/
- * error-handling logic is touched by this. */
-function PartialFillBanner({
-  coin,
-  requestedSize,
-  filledSize,
-  remainingSize,
-}: {
-  coin: string;
-  requestedSize: number;
-  filledSize: number;
-  remainingSize: number;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="mt-3 space-y-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
-      <div className="flex items-center gap-1.5 font-semibold">
-        <TriangleAlert size={14} className="shrink-0" />
-        <span>{t("hyperliquidAccount.closePositionPartiallyFilled")}</span>
-      </div>
-      <p>{t("hyperliquidAccount.closePositionPartialFillNotice")}</p>
-      <div className="space-y-1 pt-1">
-        <div className="flex items-center justify-between">
-          <span>{t("hyperliquidAccount.closePositionRequested")}</span>
-          <span className="font-medium">
-            {formatNumber(requestedSize, 5)} {coin}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>{t("hyperliquidAccount.closePositionFilledAmount")}</span>
-          <span className="font-medium">
-            {formatNumber(filledSize, 5)} {coin}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>{t("hyperliquidAccount.closePositionRemaining")}</span>
-          <span className="font-medium">
-            {formatNumber(remainingSize, 5)} {coin}
-          </span>
-        </div>
-      </div>
     </div>
   );
 }
@@ -238,6 +189,7 @@ export function ClosePositionModal({
             requestedSize={requestedSize}
             filledSize={partialFill.filledSize}
             remainingSize={partialFill.remainingSize}
+            noticeKey="hyperliquidAccount.closePositionPartialFillNotice"
           />
         ) : result ? (
           <ResultBanner result={result} />

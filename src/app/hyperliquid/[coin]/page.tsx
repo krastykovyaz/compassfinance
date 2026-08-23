@@ -35,7 +35,7 @@ import {
   type PerpOrderValidationError,
   type PerpSide,
 } from "@/lib/hyperliquid/perp-order-calculator";
-import { signAndSubmitPerpOrder } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import { signAndSubmitPerpOrder, computeOrderSizeUnits } from "@/lib/hyperliquid/hyperliquid-order-signer";
 import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -139,9 +139,15 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       setExecutionState({
         stage: "done",
         result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
+        requestedSize: 0,
       });
       return;
     }
+
+    // Same computation signAndSubmitPerpOrder uses internally for the
+    // actual order size — kept here too so the result can be compared
+    // against what was really requested for partial-fill detection.
+    const requestedSize = computeOrderSizeUnits(marginUsdc, leverage, freshMarket.price);
 
     const result = await signAndSubmitPerpOrder({
       wallet: agentWallet,
@@ -156,7 +162,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       onStageChange: (stage) => setExecutionState({ stage }),
     });
 
-    setExecutionState({ stage: "done", result });
+    setExecutionState({ stage: "done", result, requestedSize });
 
     // Real Hyperliquid-side outcomes (or an ambiguous network-failure that
     // might have gone through) all warrant refreshing the real account —
