@@ -298,6 +298,8 @@ const ru: Dictionary = {
     shares: "акций",
   },
   hyperliquidAccount: {
+    realTradingHeading: "Реальная торговля на Hyperliquid",
+    realTradingSubheading: "Отдельно от вашего учебного портфеля выше — это ваш реальный аккаунт, подключённый через кошелёк.",
     notConnected: "Подключите кошелёк",
     connectPrompt: "Смотрите реальный баланс и позиции Hyperliquid.",
     dataUnavailable: "Данные Hyperliquid недоступны.",

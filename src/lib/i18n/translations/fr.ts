@@ -298,6 +298,8 @@ const fr: Dictionary = {
     shares: "actions",
   },
   hyperliquidAccount: {
+    realTradingHeading: "Trading réel sur Hyperliquid",
+    realTradingSubheading: "Distinct de votre portefeuille Paper Trading ci-dessus — il s'agit de votre compte réel, connecté à votre portefeuille.",
     notConnected: "Connectez votre portefeuille",
     connectPrompt: "Consultez votre solde et vos positions Hyperliquid réels.",
     dataUnavailable: "Données Hyperliquid indisponibles.",

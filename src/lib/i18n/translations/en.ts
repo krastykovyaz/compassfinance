@@ -301,6 +301,8 @@ const en = {
     shares: "shares",
   },
   hyperliquidAccount: {
+    realTradingHeading: "Real Hyperliquid Trading",
+    realTradingSubheading: "Separate from your Paper Trading holdings above — this is your real, wallet-connected account.",
     notConnected: "Connect your wallet",
     connectPrompt: "See your real Hyperliquid balance and positions.",
     dataUnavailable: "Hyperliquid data unavailable.",
