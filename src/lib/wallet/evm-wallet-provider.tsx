@@ -8,8 +8,14 @@
 // signer) without touching any UI code.
 //
 // This module never requests, stores, or has access to a private key or
-// seed phrase — every call below is either a permission request
-// (eth_requestAccounts) or a read-only call (eth_chainId, eth_call).
+// seed phrase. Every call below is a permission request
+// (eth_requestAccounts), a read-only call (eth_chainId, eth_call), or —
+// added for Phase 4 real order execution — a single typed-data SIGNING
+// request (eth_signTypedData_v4). That RPC method never exposes a private
+// key to this app either: the wallet extension/app performs the actual
+// cryptographic signing internally and returns only the resulting
+// signature, after the user reviews and approves the exact message in
+// their own wallet's UI — this app supplies the message, never the key.
 
 import { Eip1193Provider, SupportedChain } from "./wallet-types";
 
@@ -48,6 +54,10 @@ export const SUPPORTED_CHAINS: Record<number, SupportedChain> = {
     usdcDecimals: 6,
   },
 };
+
+export function isSupportedChain(chainId: number): boolean {
+  return chainId in SUPPORTED_CHAINS;
+}
 
 export function getInjectedProvider(): Eip1193Provider | null {
   if (typeof window === "undefined") return null;
@@ -99,8 +109,15 @@ export async function getApprovedAccounts(): Promise<string[]> {
   }
 }
 
-export async function getChainId(): Promise<number> {
-  const provider = getInjectedProvider();
+// `explicitProvider` is `Eip1193Provider | null | undefined` at call sites —
+// wallet-provider.tsx's `wcProvider` state is `null` (not `undefined`) for
+// an injected connection, and a default *parameter* only fires on
+// `undefined`. Falling back with `??` in the body (instead of a default
+// parameter) means both "omitted" and "explicitly null" correctly resolve
+// to the injected provider, instead of null silently bypassing the
+// fallback and producing a false "No injected wallet found".
+export async function getChainId(explicitProvider?: Eip1193Provider | null): Promise<number> {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
   const hex = (await provider.request({ method: "eth_chainId" })) as string;
   return parseInt(hex, 16);
@@ -110,12 +127,13 @@ export async function getChainId(): Promise<number> {
 // read-only RPC call, no signature or gas required.
 export async function getUsdcBalance(
   address: string,
-  chainId: number
+  chainId: number,
+  explicitProvider?: Eip1193Provider | null
 ): Promise<number | null> {
   const chain = SUPPORTED_CHAINS[chainId];
   if (!chain) return null; // unsupported network — caller decides how to show this
 
-  const provider = getInjectedProvider();
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
 
   const selector = "0x70a08231"; // balanceOf(address)
@@ -139,27 +157,87 @@ export async function getUsdcBalance(
 }
 
 export function subscribeAccountsChanged(
-  cb: (accounts: string[]) => void
+  cb: (accounts: string[]) => void,
+  explicitProvider?: Eip1193Provider | null
 ): () => void {
-  const provider = getInjectedProvider();
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(args[0] as string[]);
   provider.on("accountsChanged", handler);
   return () => provider.removeListener("accountsChanged", handler);
 }
 
-export function subscribeChainChanged(cb: (chainId: number) => void): () => void {
-  const provider = getInjectedProvider();
+export function subscribeChainChanged(
+  cb: (chainId: number) => void,
+  explicitProvider?: Eip1193Provider | null
+): () => void {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = (...args: unknown[]) => cb(parseInt(args[0] as string, 16));
   provider.on("chainChanged", handler);
   return () => provider.removeListener("chainChanged", handler);
 }
 
-export function subscribeDisconnect(cb: () => void): () => void {
-  const provider = getInjectedProvider();
+export function subscribeDisconnect(
+  cb: () => void,
+  explicitProvider?: Eip1193Provider | null
+): () => void {
+  const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
   const handler = () => cb();
   provider.on("disconnect", handler);
   return () => provider.removeListener("disconnect", handler);
+}
+
+// The standard EIP712Domain field list — every eth_signTypedData_v4
+// payload must declare it under `types`, derived from whichever domain
+// fields are actually present (a domain with no `verifyingContract`, for
+// instance, must not declare that field either, or wallets reject the
+// payload as malformed).
+const EIP712_DOMAIN_TYPE_FIELDS: Record<string, string> = {
+  name: "string",
+  version: "string",
+  chainId: "uint256",
+  verifyingContract: "address",
+  salt: "bytes32",
+};
+
+function eip712DomainType(domain: Record<string, unknown>): { name: string; type: string }[] {
+  return Object.keys(domain)
+    .filter((key) => key in EIP712_DOMAIN_TYPE_FIELDS)
+    .map((key) => ({ name: key, type: EIP712_DOMAIN_TYPE_FIELDS[key] }));
+}
+
+// Requests an EIP-712 typed-data signature (eth_signTypedData_v4) — the
+// standard, universally-supported wallet method for signing a structured
+// message without broadcasting a transaction (no gas, nothing moves). Used
+// by hyperliquid-order-signer.ts to get the wallet to sign a Hyperliquid
+// order/leverage action; this function itself has no idea what the
+// message means, it only relays it to the wallet and returns the
+// resulting signature. Pops the wallet's own signing UI every time — the
+// user reviews and explicitly approves each one; there is no way to skip
+// or batch-approve this from application code.
+export async function signTypedData(
+  address: string,
+  domain: Record<string, unknown>,
+  types: Record<string, readonly { name: string; type: string }[]>,
+  primaryType: string,
+  message: Record<string, unknown>,
+  explicitProvider?: Eip1193Provider | null
+): Promise<string> {
+  const provider = explicitProvider ?? getInjectedProvider();
+  if (!provider) throw new Error("No injected wallet found");
+
+  const payload = JSON.stringify({
+    domain,
+    types: { EIP712Domain: eip712DomainType(domain), ...types },
+    primaryType,
+    message,
+  });
+
+  const signature = (await provider.request({
+    method: "eth_signTypedData_v4",
+    params: [address, payload],
+  })) as string;
+  return signature;
 }

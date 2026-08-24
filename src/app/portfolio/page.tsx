@@ -6,8 +6,7 @@ import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { PerformanceChart } from "@/components/portfolio/performance-chart";
 import { HoldingsList } from "@/components/portfolio/holdings-list";
-import { HyperliquidPanel } from "@/components/portfolio/hyperliquid-panel";
-import { hyperliquidAccount } from "@/lib/mock-data";
+import { HyperliquidAccountPanel } from "@/components/portfolio/hyperliquid-account-panel";
 import { usePaperAccount } from "@/lib/trading/paper-account-provider";
 import { accountToHoldings } from "@/lib/trading/holdings";
 import { formatCurrency, formatSignedPercent } from "@/lib/utils";
@@ -80,10 +79,7 @@ export default function PortfolioPage() {
           )}
         </Card>
 
-        <HyperliquidPanel
-          accountLabel={hyperliquidAccount.accountLabel}
-          network={hyperliquidAccount.network}
-        />
+        <HyperliquidAccountPanel />
       </div>
     </AppShell>
   );

@@ -28,6 +28,11 @@ export type WalletState = {
   address: string | null;
   chainId: number | null;
   chainName: string | null;
+  /** True once connected to a chain outside SUPPORTED_CHAINS — the wallet
+   * connection itself is still valid, but USDC balance can't be read (no
+   * known token address for that chain). Never affects Hyperliquid account
+   * data, which is address-only and chain-agnostic. */
+  isUnsupportedChain: boolean;
   usdcBalance: number | null;
   isConnected: boolean;
   isConnecting: boolean;
@@ -39,6 +44,21 @@ export type WalletContextValue = WalletState & {
   connect: () => Promise<void>;
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
+  /** Starts a WalletConnect connection attempt (mobile Safari/Chrome, or
+   * desktop without an injected wallet). No-op if not configured. */
+  connectWalletConnect: () => Promise<void>;
+  /** Set once a WalletConnect pairing URI is available to render as a QR
+   * code / deep link. Cleared on connect, disconnect, or cancel. */
+  walletConnectUri: string | null;
+  /** True when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is configured. */
+  isWalletConnectAvailable: boolean;
+  /** The Eip1193Provider currently backing this connection (whichever
+   * transport — injected or WalletConnect — is actually active), or null
+   * when disconnected. Exposes the exact fallback resolution the wallet
+   * layer already uses internally, for Phase 4's order signer to request
+   * a signature from the RIGHT transport — never a new/second wallet
+   * state, just a read accessor onto the existing one. */
+  getSigningProvider: () => Eip1193Provider | null;
 };
 
 // Minimal EIP-1193 provider interface — the same shape MetaMask and other

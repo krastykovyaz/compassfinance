@@ -76,6 +76,7 @@ const FULLY_UNLOCKED_PROGRESS = {
   distinctAssetsInvested: 10,
   unlockedAchievements: ["FIRST_LESSON", "FIRST_QUIZ", "STOCK_EXPLORER", "FIRST_INVESTMENT", "DIVERSIFIED"],
   completedLessons: ["sp500", "nasdaq", "aapl", "tsla", "nvda"],
+  completedQuizzes: ["sp500", "nasdaq", "aapl", "tsla", "nvda"],
   lastActivityAt: new Date().toISOString(),
 };
 
@@ -115,6 +116,7 @@ describe("placePaperTrade — investment-unlock enforcement (Milestone 23)", () 
     getServerLearningProgress.mockResolvedValue({
       ...FULLY_UNLOCKED_PROGRESS,
       completedLessons: ["sp500", "nasdaq"],
+      completedQuizzes: ["sp500", "nasdaq"],
     });
     getQuote.mockResolvedValue({ slug: "nasdaq", status: "ok", quote: { price: 500 } });
     repo.getPosition.mockResolvedValue(null);
@@ -146,6 +148,7 @@ describe("placePaperTrade — investment-unlock enforcement (Milestone 23)", () 
     getServerLearningProgress.mockResolvedValue({
       ...FULLY_UNLOCKED_PROGRESS,
       completedLessons: ["btc"],
+      completedQuizzes: ["btc"],
       unlockedAchievements: [],
     });
     await placePaperTrade("user-1", "btc", "BUY", 1);

@@ -26,9 +26,12 @@ export type NewsItem = {
 export interface NewsProvider {
   id: "marketaux" | "mock";
   /**
-   * Fetch the latest broad financial news. Implementations must make at
-   * most one upstream request per call — category/symbol filtering happens
-   * afterwards, in-process, against the returned set.
+   * Fetch the latest broad financial news (a real provider may page
+   * through several requests internally to build one batch, e.g. a plan
+   * that caps articles-per-request — see marketaux-provider.ts). Whatever
+   * it returns is one already-complete batch: category/symbol filtering
+   * happens afterwards, in-process, against it — never by issuing another
+   * request per category/symbol.
    */
   getLatestNews(): Promise<NewsItem[]>;
 }

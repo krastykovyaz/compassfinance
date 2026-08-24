@@ -16,6 +16,9 @@ import { getLevelFromXP } from "./xp";
 export type RawProgressInput = {
   xp: number;
   completedLessons: string[];
+  /** assetIds whose quiz has been submitted at least once — see
+   * LearningProgress.completedQuizzes for the exact meaning. */
+  completedQuizzes: string[];
   quizzesCompletedCount: number;
   correctAnswersCount: number;
   currentStreak: number;
@@ -27,9 +30,30 @@ export type RawProgressInput = {
    * (paper trading is server-backed, authenticated-only — see
    * src/lib/trading/), so both call sites of this function pass 0. */
   distinctAssetsInvested: number;
+  /** assetIds practice-traded at least once — see LearningProgress's field
+   * of the same name. Same "local/anonymous has none" reasoning as
+   * distinctAssetsInvested above: both call sites pass []. */
+  practiceTradedAssetIds: string[];
   achievements: string[];
   lastActivityAt: string | null;
 };
+
+/**
+ * assetIds whose quiz has been submitted at least once, derived from the
+ * client's raw per-asset progress shape (the legacy top-level sp500 quiz
+ * flag plus the generic per-asset engine's assetLessonProgress map).
+ * Shared by progress-store.tsx and reducer.ts so both compute this the
+ * same way, rather than each keeping its own copy.
+ */
+export function deriveCompletedQuizzes(state: {
+  quizCompleted: boolean;
+  assetLessonProgress: Record<string, { quizCompleted: boolean }>;
+}): string[] {
+  const fromGenericEngine = Object.entries(state.assetLessonProgress)
+    .filter(([, ap]) => ap.quizCompleted)
+    .map(([assetId]) => assetId);
+  return state.quizCompleted ? ["sp500", ...fromGenericEngine] : fromGenericEngine;
+}
 
 export function deriveLearningProgress(raw: RawProgressInput): LearningProgress {
   return {
@@ -43,8 +67,10 @@ export function deriveLearningProgress(raw: RawProgressInput): LearningProgress 
     assetsExplored: raw.assetsExploredSlugs.length,
     investmentsMade: raw.investmentsMade,
     distinctAssetsInvested: raw.distinctAssetsInvested,
+    practiceTradedAssetIds: raw.practiceTradedAssetIds,
     unlockedAchievements: raw.achievements,
     completedLessons: raw.completedLessons,
+    completedQuizzes: raw.completedQuizzes,
     lastActivityAt: raw.lastActivityAt,
   };
 }

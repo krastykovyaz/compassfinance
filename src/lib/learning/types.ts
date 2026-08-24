@@ -19,11 +19,26 @@ export type LearningProgress = {
   investmentsMade: number;
   /** Count of DISTINCT assetIds ever traded — what the "Diversified"
    * achievement actually needs (3 trades of the same asset is 1, not 3).
-   * See achievements.ts's DIVERSIFIED and learning-repository.ts's
-   * getDistinctAssetsInvestedCount for the real, persisted source. */
+   * Just practiceTradedAssetIds.length — see achievements.ts's
+   * DIVERSIFIED and learning-repository.ts's getPracticeTradedAssetIds
+   * for the real, persisted source. */
   distinctAssetsInvested: number;
   unlockedAchievements: string[];
   completedLessons: string[];
+  /** assetIds whose quiz has been submitted at least once (pass or fail —
+   * matches AssetProgressDTO's existing "quizCompleted" meaning, i.e. an
+   * attempt, not a passing score). See unlocks.ts's getInvestmentAccess:
+   * investment access requires BOTH this and completedLessons, since
+   * finishing the lesson READING is not the same as finishing the course. */
+  completedQuizzes: string[];
+  /** assetIds the user has made at least one Paper Trade of (BUY or SELL),
+   * ever — the "has this learner actually practiced trading this specific
+   * asset" signal. Distinct from `distinctAssetsInvested` (a count, used
+   * only by the DIVERSIFIED achievement): this is the per-asset membership
+   * list a real-trading gate can check `.includes(assetId)` against. See
+   * learning-repository.ts's getPracticeTradedAssetIds for the real,
+   * persisted source. */
+  practiceTradedAssetIds: string[];
   lastActivityAt: string | null; // ISO timestamp, null before any activity
 };
 

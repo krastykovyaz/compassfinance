@@ -16,6 +16,8 @@ function progress(overrides: Partial<LearningProgress> = {}): LearningProgress {
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
+    practiceTradedAssetIds: [],
     lastActivityAt: null,
     ...overrides,
   };

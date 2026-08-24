@@ -61,3 +61,12 @@ export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export function isValidNotificationEventType(value: string): value is NotificationEventType {
   return (NOTIFICATION_EVENT_TYPES as readonly string[]).includes(value);
 }
+
+/** A syntactically valid EVM address (checksum not enforced — case-
+ * insensitive 40-hex-char form is accepted, matching what window.ethereum
+ * returns). This never validates that the address is actually reachable
+ * or has any Hyperliquid activity — that's a separate "unavailable"/
+ * "empty account" concern handled by the Hyperliquid service layer. */
+export function isValidEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}

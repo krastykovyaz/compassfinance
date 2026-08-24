@@ -75,7 +75,7 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     xpReward: 100,
     // Milestone 19: fixed to require 3 DISTINCT assetIds, not 3 trades —
     // p.distinctAssetsInvested is a real count of unique assets ever
-    // traded (see learning-repository.ts's getDistinctAssetsInvestedCount),
+    // traded (see learning-repository.ts's getPracticeTradedAssetIds),
     // so three trades of the same asset no longer satisfies this.
     isUnlocked: (p) => p.distinctAssetsInvested >= 3,
   },

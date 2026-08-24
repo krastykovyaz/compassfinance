@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
+import { useMemo, useState } from "react";
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { PERFORMANCE_RANGES, PerformanceRange } from "@/lib/trading/types";
 import { usePerformanceHistory } from "@/lib/trading/paper-account-provider";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,22 @@ export function PerformanceChart() {
   const last = points[points.length - 1]?.v;
   const positive = first == null || last == null ? true : last >= first;
   const hasEnoughHistory = points.length >= 2;
+
+  // A tight ["dataMin", "dataMax"] domain stretches even a trivial move
+  // (a few cents on a $1,000+ balance) to fill the entire chart height,
+  // reading as a dramatic crash/rally when nothing meaningful happened.
+  // Pad generously relative to the real spread, with a value-relative
+  // floor so a perfectly flat line still renders as a flat line
+  // mid-chart instead of a degenerate zero-height domain.
+  const yDomain = useMemo<[number, number] | undefined>(() => {
+    if (points.length === 0) return undefined;
+    const values = points.map((p) => p.v);
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const span = dataMax - dataMin;
+    const padding = Math.max(span * 1.5, dataMax * 0.002);
+    return [dataMin - padding, dataMax + padding];
+  }, [points]);
 
   return (
     <div>
@@ -47,7 +63,14 @@ export function PerformanceChart() {
                   />
                 </linearGradient>
               </defs>
-              <YAxis domain={["dataMin", "dataMax"]} hide />
+              {/* Snapshots are recorded opportunistically (throttled, not on a
+                  fixed interval), so a quiet overnight stretch can have far
+                  fewer points than an active one covering less real time.
+                  Without a real time-based x-axis, index-based spacing
+                  compresses sparse periods and stretches dense ones,
+                  distorting flat/near-flat history into a misleading spike. */}
+              <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} hide />
+              <YAxis domain={yDomain ?? ["dataMin", "dataMax"]} hide />
               <Area
                 type="monotone"
                 dataKey="v"

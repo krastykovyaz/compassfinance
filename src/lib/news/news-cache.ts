@@ -9,7 +9,14 @@
 
 import { NewsItem } from "./news-types";
 
-export const NEWS_CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
+// The Marketaux provider now issues several requests per refresh (one per
+// page of its 3-articles-per-request plan cap — see marketaux-provider.ts)
+// to build a real week's worth of news instead of just 3 headlines. A
+// 20-minute TTL at several requests per refresh would burn through the
+// account's small daily request quota well before the day is out; a few
+// hours keeps total daily requests low while still refreshing often enough
+// for a personal-finance news feed (this isn't a real-time trading feed).
+export const NEWS_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 export type NewsCacheEntry = {
   items: NewsItem[];

@@ -2,11 +2,16 @@
 
 import { Compass as CompassIcon, PartyPopper } from "lucide-react";
 import Link from "next/link";
-import { useTranslation } from "@/lib/i18n/locale-provider";
+import { translate } from "@/lib/i18n/translate";
+import type { Locale } from "@/lib/i18n/types";
 import { PublicShare } from "@/server/services/achievement-sharing-service";
 
-export function ShareLanding({ share }: { share: PublicShare | null }) {
-  const { t } = useTranslation();
+// Rendered in the SHARER's account language (passed down from the Server
+// Component page), not the visitor's own browser/localStorage locale —
+// intentionally NOT useTranslation() here. Whoever opens a shared link
+// should see it exactly as the person who shared it would have.
+export function ShareLanding({ share, locale }: { share: PublicShare | null; locale: Locale }) {
+  const t = (key: string) => translate(locale, key);
 
   return (
     <div className="flex min-h-dvh flex-col justify-center gap-8 bg-canvas px-6 py-10">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getInvestmentAccess, isInvestmentUnlocked, INVESTMENT_UNLOCK_STAGES, getBlockingInvestmentStage, isLockedByPriorCourse } from "./unlocks";
+import { getInvestmentAccess, isInvestmentUnlocked, INVESTMENT_UNLOCK_STAGES, getBlockingInvestmentStage, isLockedByPriorCourse, getNextInvestmentStage } from "./unlocks";
 import { LearningProgress, InvestmentUnlockDefinition } from "./types";
 import { ALL_ASSET_LEARNING_PATHS, ASSET_LEARNING_PATH_ORDER } from "./content";
 import { ALL_ASSETS } from "@/lib/assets/catalog";
@@ -18,9 +18,19 @@ function progress(overrides: Partial<LearningProgress> = {}): LearningProgress {
     distinctAssetsInvested: 0,
     unlockedAchievements: [],
     completedLessons: [],
+    completedQuizzes: [],
+    practiceTradedAssetIds: [],
     lastActivityAt: null,
     ...overrides,
   };
+}
+
+/** Both the lesson AND the quiz done for the given assetIds — the normal
+ * "fully completed this course" fixture most tests below want, since
+ * getInvestmentAccess now requires both (see the "lesson complete but quiz
+ * not yet taken" describe block for the fix this specifically covers). */
+function fullyCompleted(...assetIds: string[]): Pick<LearningProgress, "completedLessons" | "completedQuizzes"> {
+  return { completedLessons: assetIds, completedQuizzes: assetIds };
 }
 
 describe("getInvestmentAccess / isInvestmentUnlocked — new user (test 1)", () => {
@@ -43,19 +53,60 @@ describe("required lesson missing (test 6)", () => {
   });
 });
 
+// Regression test: the reported bug. Finishing a course's lesson STEPS
+// (reading through the content) used to be sufficient on its own to
+// unlock investing — completeAssetLesson()/handleContinueLesson() marks
+// completedLessons before the learner ever reaches the quiz stage. A
+// learner who "just started following the course" and hasn't finished
+// the quiz yet must NOT already have the option to buy.
+describe("lesson complete but quiz not yet taken — must NOT unlock investing (the reported bug)", () => {
+  it("BTC: lesson finished, quiz not started — still not UNLOCKED", () => {
+    const p = progress({ completedLessons: ["btc"], completedQuizzes: [] });
+    expect(getInvestmentAccess("btc", p)).not.toBe("UNLOCKED");
+    expect(isInvestmentUnlocked("btc", p)).toBe(false);
+  });
+
+  it("BTC: quiz somehow recorded without the lesson (shouldn't normally happen) — still not UNLOCKED", () => {
+    const p = progress({ completedLessons: [], completedQuizzes: ["btc"] });
+    expect(getInvestmentAccess("btc", p)).not.toBe("UNLOCKED");
+  });
+
+  it("BTC: both lesson and quiz done — genuinely UNLOCKED", () => {
+    const p = progress(fullyCompleted("btc"));
+    expect(getInvestmentAccess("btc", p)).toBe("UNLOCKED");
+    expect(isInvestmentUnlocked("btc", p)).toBe(true);
+  });
+
+  it("sp500: lesson finished, quiz not taken — Nasdaq must stay LOCKED, not AVAILABLE (the prerequisite genuinely isn't unlocked yet)", () => {
+    const p = progress({ completedLessons: ["sp500"], completedQuizzes: [] });
+    expect(getInvestmentAccess("sp500", p)).not.toBe("UNLOCKED");
+    expect(getInvestmentAccess("nasdaq", p)).toBe("LOCKED");
+  });
+
+  it("getBlockingInvestmentStage still names the asset's own stage as the blocker when only the quiz is missing", () => {
+    const p = progress({ completedLessons: ["btc"], completedQuizzes: [] });
+    expect(getBlockingInvestmentStage("btc", p)?.assetId).toBe("btc");
+  });
+
+  it("getNextInvestmentStage keeps pointing at the SAME course until its quiz is done, rather than skipping ahead", () => {
+    const p = progress({ completedLessons: ["sp500"], completedQuizzes: [] });
+    expect(getNextInvestmentStage(p)?.assetId).toBe("sp500");
+  });
+});
+
 describe("required achievement missing (test 7)", () => {
-  it("AAPL requires STOCK_EXPLORER — lesson alone isn't enough", () => {
+  it("AAPL requires STOCK_EXPLORER — lesson+quiz alone isn't enough", () => {
     const p = progress({
-      completedLessons: ["sp500", "nasdaq", "aapl"],
+      ...fullyCompleted("sp500", "nasdaq", "aapl"),
       unlockedAchievements: [], // STOCK_EXPLORER not present
     });
     expect(getInvestmentAccess("aapl", p)).not.toBe("UNLOCKED");
     expect(isInvestmentUnlocked("aapl", p)).toBe(false);
   });
 
-  it("unlocks once both the lesson AND the achievement are present", () => {
+  it("unlocks once the lesson, quiz, AND the achievement are all present", () => {
     const p = progress({
-      completedLessons: ["sp500", "nasdaq", "aapl"],
+      ...fullyCompleted("sp500", "nasdaq", "aapl"),
       unlockedAchievements: ["STOCK_EXPLORER"],
     });
     expect(getInvestmentAccess("aapl", p)).toBe("UNLOCKED");
@@ -121,8 +172,8 @@ describe("practice trade does not bypass learning unlock (test 9)", () => {
 });
 
 describe("S&P 500 progression (test 11)", () => {
-  it("existing sp500 completion is still recognized as UNLOCKED", () => {
-    const p = progress({ completedLessons: ["sp500"] });
+  it("existing sp500 completion (lesson + quiz) is still recognized as UNLOCKED", () => {
+    const p = progress(fullyCompleted("sp500"));
     expect(isInvestmentUnlocked("sp500", p)).toBe(true);
     expect(getInvestmentAccess("nasdaq", p)).toBe("AVAILABLE");
   });
@@ -133,10 +184,10 @@ describe("sequential stage gating", () => {
     const notStarted = progress();
     expect(getInvestmentAccess("nasdaq", notStarted)).toBe("LOCKED");
 
-    const sp500Done = progress({ completedLessons: ["sp500"] });
+    const sp500Done = progress(fullyCompleted("sp500"));
     expect(getInvestmentAccess("nasdaq", sp500Done)).toBe("AVAILABLE");
 
-    const nasdaqDone = progress({ completedLessons: ["sp500", "nasdaq"] });
+    const nasdaqDone = progress(fullyCompleted("sp500", "nasdaq"));
     expect(getInvestmentAccess("nasdaq", nasdaqDone)).toBe("UNLOCKED");
   });
 
@@ -149,10 +200,11 @@ describe("sequential stage gating", () => {
     expect(INVESTMENT_UNLOCK_STAGES[0].prerequisiteAssetId).toBeUndefined();
   });
 
-  it("all remaining assets require their own learning path before investment", () => {
+  it("all remaining assets require their own learning path (lesson + quiz) before investment", () => {
     for (const assetId of ["msft", "amzn", "googl", "meta", "gold", "brent-oil", "btc", "eth"]) {
       expect(getInvestmentAccess(assetId, progress())).toBe("AVAILABLE");
-      expect(getInvestmentAccess(assetId, progress({ completedLessons: [assetId] }))).toBe("UNLOCKED");
+      expect(getInvestmentAccess(assetId, progress({ completedLessons: [assetId] }))).not.toBe("UNLOCKED");
+      expect(getInvestmentAccess(assetId, progress(fullyCompleted(assetId)))).toBe("UNLOCKED");
     }
   });
 });
@@ -178,10 +230,12 @@ describe("all 13 assets resolve through the canonical registry (test 12)", () =>
     }
   });
 
-  it("a standalone asset unlocks only after its own learning path is completed", () => {
+  it("a standalone asset unlocks only after its own learning path (lesson + quiz) is completed", () => {
     const noProgress = progress();
-    const completed = progress({ completedLessons: ["btc"] });
+    const lessonOnly = progress({ completedLessons: ["btc"] });
+    const completed = progress(fullyCompleted("btc"));
     expect(getInvestmentAccess("btc", noProgress)).toBe("AVAILABLE");
+    expect(getInvestmentAccess("btc", lessonOnly)).not.toBe("UNLOCKED");
     expect(getInvestmentAccess("btc", completed)).toBe("UNLOCKED");
   });
 });
@@ -204,9 +258,9 @@ describe("getBlockingInvestmentStage — points at the REAL blocker, not always 
   it("returns the asset's own stage for a standalone asset until its course is complete", () => {
     const p = progress();
     expect(getBlockingInvestmentStage("btc", p)?.assetId).toBe("btc");
-    const btcDone = progress({ completedLessons: ["btc"] });
+    const btcDone = progress(fullyCompleted("btc"));
     expect(getBlockingInvestmentStage("btc", btcDone)).toBeNull();
-    const sp500Done = progress({ completedLessons: ["sp500"] });
+    const sp500Done = progress(fullyCompleted("sp500"));
     expect(getBlockingInvestmentStage("sp500", sp500Done)).toBeNull();
   });
 
@@ -217,14 +271,14 @@ describe("getBlockingInvestmentStage — points at the REAL blocker, not always 
   });
 
   it("once S&P 500 is done, Tesla's blocker becomes Nasdaq (the next unmet stage)", () => {
-    const p = progress({ completedLessons: ["sp500"] });
+    const p = progress(fullyCompleted("sp500"));
     const blocker = getBlockingInvestmentStage("tsla", p);
     expect(blocker?.assetId).toBe("nasdaq");
   });
 
   it("once every earlier stage is done except the asset's own lesson, the asset itself is the blocker", () => {
     const p = progress({
-      completedLessons: ["sp500", "nasdaq", "aapl"],
+      ...fullyCompleted("sp500", "nasdaq", "aapl"),
       unlockedAchievements: ["STOCK_EXPLORER"],
     });
     const blocker = getBlockingInvestmentStage("tsla", p);
@@ -239,7 +293,7 @@ describe("isLockedByPriorCourse — the exact gate /learn/[assetId] uses to disa
   });
 
   it("once S&P 500 is done, opening Nasdaq's own course is NOT locked by a prior course -> Start Course enabled", () => {
-    const p = progress({ completedLessons: ["sp500"] });
+    const p = progress(fullyCompleted("sp500"));
     // Nasdaq's own lesson still isn't done, but that's normal/expected —
     // not a "prior course" block, so the gate must not fire.
     expect(isLockedByPriorCourse("nasdaq", p)).toBe(false);
@@ -254,9 +308,7 @@ describe("isLockedByPriorCourse — the exact gate /learn/[assetId] uses to disa
   });
 
   it("no regression once everything upstream is genuinely unlocked: Nasdaq fully unlocked is not locked by a prior course", () => {
-    const p = progress({
-      completedLessons: ["sp500", "nasdaq"],
-    });
+    const p = progress(fullyCompleted("sp500", "nasdaq"));
     expect(isInvestmentUnlocked("nasdaq", p)).toBe(true);
     expect(isLockedByPriorCourse("nasdaq", p)).toBe(false);
   });
@@ -283,14 +335,19 @@ describe("Learning Progress 'X/Y assets' count — must use REAL investment unlo
     expect(unlockedAssetCount(progress())).toBe(0);
   });
 
-  it("does NOT just count completed lessons — completing aapl's lesson alone (without the required STOCK_EXPLORER achievement) doesn't unlock it", () => {
-    const p = progress({ completedLessons: ["sp500", "nasdaq", "aapl"] }); // lesson done, achievement missing
+  it("does NOT just count completed lessons — completing aapl's lesson+quiz alone (without the required STOCK_EXPLORER achievement) doesn't unlock it", () => {
+    const p = progress(fullyCompleted("sp500", "nasdaq", "aapl")); // lesson+quiz done, achievement missing
     expect(getInvestmentAccess("aapl", p)).not.toBe("UNLOCKED");
     expect(unlockedAssetCount(p)).toBe(2); // sp500 + nasdaq unlocked; aapl still isn't
   });
 
-  it("increases by exactly 1 once sp500's own lesson is genuinely completed", () => {
-    const p = progress({ completedLessons: ["sp500"] });
+  it("does NOT count a lesson finished without its quiz — the reported bug, counted end-to-end", () => {
+    const p = progress({ completedLessons: ["sp500"], completedQuizzes: [] });
+    expect(unlockedAssetCount(p)).toBe(0);
+  });
+
+  it("increases by exactly 1 once sp500's own lesson AND quiz are genuinely completed", () => {
+    const p = progress(fullyCompleted("sp500"));
     expect(unlockedAssetCount(p)).toBe(1);
   });
 

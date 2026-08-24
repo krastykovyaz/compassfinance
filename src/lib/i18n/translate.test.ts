@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getByPath, resolveInitialLocale, translate } from "./translate";
+import { getByPath, resolveInitialLocale, toSupportedLocale, translate } from "./translate";
 
 describe("translate() — English renders correctly (test 1)", () => {
   it("resolves a known key to its English string", () => {
@@ -35,6 +35,20 @@ describe("translate() — missing translation falls back safely (test 5)", () =>
     // @ts-expect-error — deliberately passing an invalid locale to prove
     // the app can't crash even if a corrupted localStorage value slips in.
     expect(() => translate("de", "navigation.home")).not.toThrow();
+  });
+});
+
+describe("toSupportedLocale() — coerces a stored DB value into a real Locale", () => {
+  it("passes through a supported locale unchanged", () => {
+    expect(toSupportedLocale("ru")).toBe("ru");
+    expect(toSupportedLocale("fr")).toBe("fr");
+  });
+
+  it("defaults to English for null, undefined, empty, or unsupported values", () => {
+    expect(toSupportedLocale(null)).toBe("en");
+    expect(toSupportedLocale(undefined)).toBe("en");
+    expect(toSupportedLocale("")).toBe("en");
+    expect(toSupportedLocale("de")).toBe("en");
   });
 });
 
