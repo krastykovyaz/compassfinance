@@ -11,6 +11,7 @@ import { NotificationsProvider } from "@/lib/notifications/notifications-provide
 import { PaperAccountProvider } from "@/lib/trading/paper-account-provider";
 import { HyperliquidAccountProvider } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { HyperliquidAgentProvider } from "@/lib/hyperliquid/hyperliquid-agent-provider";
+import { ChunkReloadGuard } from "@/components/chunk-reload-guard";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://compassfinance.online"),
@@ -27,6 +28,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
+        <ChunkReloadGuard />
         {/* This wrapper and the "phone" div below it both use min-h-dvh —
             on real mobile Safari the two can briefly disagree by a few px
             while the address bar collapses/expands, exposing a sliver of
