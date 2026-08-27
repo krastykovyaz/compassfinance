@@ -119,8 +119,14 @@ export async function getApprovedAccounts(): Promise<string[]> {
 export async function getChainId(explicitProvider?: Eip1193Provider | null): Promise<number> {
   const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) throw new Error("No injected wallet found");
-  const hex = (await provider.request({ method: "eth_chainId" })) as string;
-  return parseInt(hex, 16);
+  const raw = await provider.request({ method: "eth_chainId" });
+  // eth_chainId is spec'd to always return a hex string, but the
+  // chainChanged bug below (a real provider sending a plain-decimal
+  // payload for one EIP-1193 method) is reason enough not to trust that
+  // guarantee blindly for the other one either — reuse the same lenient
+  // parser so a non-conformant response here can't silently corrupt the
+  // chain id the same way.
+  return parseChainId(raw);
 }
 
 // Encodes and sends an ERC-20 balanceOf(address) call via eth_call — a
@@ -172,14 +178,14 @@ export function subscribeAccountsChanged(
 // (e.g. the number/string `43114` for Avalanche C-Chain) rather than the
 // hex-prefixed string ("0xa86a") EIP-1193's spec describes — this varies
 // across real provider implementations, unlike the standalone
-// `eth_chainId` RPC method (see getChainId below), whose response format
-// IS reliably always hex per the JSON-RPC spec. Blindly parsing every
-// chainChanged payload as hex silently corrupted the tracked chain id
-// (`parseInt("43114", 16)` = 274708, a nonexistent chain) — invisibly
-// wrong everywhere that value was later trusted, including the
-// signatureChainId used for real Hyperliquid signing. Handles both
-// shapes instead of assuming one.
-function parseChainChangedPayload(raw: unknown): number {
+// `eth_chainId` RPC method, whose response format is *supposed* to be
+// reliably hex per the JSON-RPC spec. Blindly parsing every payload as
+// hex silently corrupted the tracked chain id (`parseInt("43114", 16)` =
+// 274708, a nonexistent chain) — invisibly wrong everywhere that value
+// was later trusted, including the signatureChainId used for real
+// Hyperliquid signing. Shared by getChainId and subscribeChainChanged so
+// neither call site has to assume one shape.
+function parseChainId(raw: unknown): number {
   if (typeof raw === "number") return raw;
   const str = String(raw);
   return str.startsWith("0x") || str.startsWith("0X") ? parseInt(str, 16) : parseInt(str, 10);
@@ -191,7 +197,7 @@ export function subscribeChainChanged(
 ): () => void {
   const provider = explicitProvider ?? getInjectedProvider();
   if (!provider) return () => {};
-  const handler = (...args: unknown[]) => cb(parseChainChangedPayload(args[0]));
+  const handler = (...args: unknown[]) => cb(parseChainId(args[0]));
   provider.on("chainChanged", handler);
   return () => provider.removeListener("chainChanged", handler);
 }

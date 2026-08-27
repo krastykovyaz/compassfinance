@@ -131,6 +131,14 @@ describe("getChainId — network detection", () => {
 
     expect(await getChainId(null)).toBe(1);
   });
+
+  it("also handles a plain decimal string response — eth_chainId is spec'd as hex, but a non-conformant provider returning decimal shouldn't get silently mis-parsed the way chainChanged once did", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "43114") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    expect(await getChainId()).toBe(43114);
+    expect(await getChainId()).not.toBe(274708);
+  });
 });
 
 describe("isSupportedChain", () => {
