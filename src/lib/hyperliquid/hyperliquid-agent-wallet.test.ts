@@ -419,6 +419,105 @@ describe("approveAgent — orchestration", () => {
     }
   });
 
+  it("self-heals a stale walletChainId: retries once with a live getChainId() value after an 'active chainId is different' rejection, and succeeds", async () => {
+    signUserSignedAction
+      .mockRejectedValueOnce({ code: -32602, message: "Invalid parameters: active chainId is different than the one provided." })
+      .mockResolvedValueOnce(SIGNATURE);
+    getChainId.mockResolvedValue(42161); // the wallet's genuinely current chain
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    // walletChainId (43114) is stale — the tracked value from a
+    // chainChanged event that never fired for a switch made elsewhere.
+    const result = await approveAgent({
+      provider: mockProvider(),
+      address: "0xuser",
+      agentAddress: "0xagent",
+      isTestnet: false,
+      walletChainId: 43114,
+    });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(2);
+    expect(getChainId).toHaveBeenCalledTimes(1); // only the retry's live round trip
+    expect(signUserSignedAction.mock.calls[0][0].action.signatureChainId).toBe("0xa86a"); // 43114 — the stale guess
+    expect(signUserSignedAction.mock.calls[1][0].action.signatureChainId).toBe("0xa4b1"); // 42161 — the corrected retry
+    expect(result.status).toBe("pending");
+  });
+
+  it("does not retry (and returns the diagnostic error immediately) when the fresh getChainId() value is identical to the one that just failed — nothing to gain from an identical resubmission", async () => {
+    signUserSignedAction.mockRejectedValue({
+      code: -32602,
+      message: "Invalid parameters: active chainId is different than the one provided.",
+    });
+    getChainId.mockResolvedValue(43114); // same as walletChainId below — no real fix available
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await approveAgent({
+      provider: mockProvider(),
+      address: "0xuser",
+      agentAddress: "0xagent",
+      isTestnet: false,
+      walletChainId: 43114,
+    });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("rejected");
+  });
+
+  it("does not retry on a rejection unrelated to a chainId mismatch", async () => {
+    signUserSignedAction.mockRejectedValue({ code: -32000, message: "Some other RPC error" });
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await approveAgent({
+      provider: mockProvider(),
+      address: "0xuser",
+      agentAddress: "0xagent",
+      isTestnet: false,
+      walletChainId: 43114,
+    });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(1);
+    expect(getChainId).not.toHaveBeenCalled();
+    expect(result.status).toBe("rejected");
+  });
+
+  it("does not retry when the first attempt already used a live getChainId() call — an injected wallet with no walletChainId hint", async () => {
+    signUserSignedAction.mockRejectedValue({
+      code: -32602,
+      message: "Invalid parameters: active chainId is different than the one provided.",
+    });
+    getChainId.mockResolvedValue(42161);
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await approveAgent({
+      provider: mockProvider(),
+      address: "0xuser",
+      agentAddress: "0xagent",
+      isTestnet: false,
+    });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(1);
+    expect(getChainId).toHaveBeenCalledTimes(1); // the initial (non-retry) call only
+    expect(result.status).toBe("rejected");
+  });
+
+  it("still classifies a wallet rejection on the retry attempt as wallet-rejected, not a generic error", async () => {
+    signUserSignedAction
+      .mockRejectedValueOnce({ code: -32602, message: "Invalid parameters: active chainId is different than the one provided." })
+      .mockRejectedValueOnce({ code: 4001, message: "User rejected" });
+    getChainId.mockResolvedValue(42161);
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await approveAgent({
+      provider: mockProvider(),
+      address: "0xuser",
+      agentAddress: "0xagent",
+      isTestnet: false,
+      walletChainId: 43114,
+    });
+
+    expect(result).toEqual({ status: "wallet-rejected" });
+  });
+
   it("passes isTestnet through as hyperliquidChain: Testnet", async () => {
     signUserSignedAction.mockResolvedValue(SIGNATURE);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
