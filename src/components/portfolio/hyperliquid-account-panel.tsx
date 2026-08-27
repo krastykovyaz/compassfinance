@@ -66,9 +66,9 @@ export function resolveHyperliquidPanelView(params: {
 export function HyperliquidAccountPanel() {
   const { t } = useTranslation();
   const { status: sessionStatus } = useSession();
-  const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
+  const { status: walletStatus, address, chainId: walletChainId, isConnecting, isUnsupportedChain, getSigningProvider } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage, refresh } = useHyperliquidAccount();
-  const { agentStatus, agentWallet } = useHyperliquidAgent();
+  const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   // Phase 8 — the one (today) configured HIP-3 dex, if any. Never
   // combined with the main account above: a completely separate fetch
   // against that dex's own isolated margin pool (see asset-mapping.ts's
@@ -145,6 +145,29 @@ export function HyperliquidAccountPanel() {
         refresh();
       }
     }
+  }
+
+  // Lets a user approve real trading directly from the Manage Position
+  // modal instead of having to navigate to a trading page first — agent
+  // approval is deliberately in-memory only (see
+  // hyperliquid-agent-provider.tsx), so it's gone after any reload even
+  // with the wallet still connected, and previously this was the only
+  // place in the app that couldn't recover from that itself.
+  async function handleApproveAgentFromPortfolio() {
+    const provider = getSigningProvider();
+    if (!provider || !address) return;
+
+    let isTestnet = false;
+    try {
+      const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
+      const json = (await res.json()) as { isTestnet?: boolean };
+      isTestnet = Boolean(json.isTestnet);
+    } catch {
+      // isTestnet stays false — approveAgent() still runs, just against
+      // mainnet's hyperliquidChain classification if this fetch failed.
+    }
+
+    await approveAgent({ provider, address, isTestnet, walletChainId });
   }
 
   function handleCloseModalDismiss() {
@@ -469,6 +492,9 @@ export function HyperliquidAccountPanel() {
         sizeInput={closeSizeInput}
         onSizeInputChange={setCloseSizeInput}
         agentReady={agentStatus === "approved"}
+        agentApproving={agentStatus === "approving"}
+        agentError={agentStatus === "error" ? agentError : null}
+        onApproveAgent={() => void handleApproveAgentFromPortfolio()}
         executionState={closeExecutionState}
         onConfirm={() => void handleConfirmClose()}
         onClose={handleCloseModalDismiss}

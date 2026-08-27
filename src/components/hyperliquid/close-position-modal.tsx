@@ -46,6 +46,9 @@ export function ClosePositionModal({
   sizeInput,
   onSizeInputChange,
   agentReady,
+  agentApproving,
+  agentError,
+  onApproveAgent,
   executionState,
   onConfirm,
   onClose,
@@ -59,8 +62,16 @@ export function ClosePositionModal({
   onSizeInputChange: (value: string) => void;
   /** False when no agent has been approved yet (see
    * hyperliquid-agent-provider.tsx) — closing still needs a real
-   * signature, same as opening does. */
+   * signature, same as opening does. Real, reported confusion this fixes:
+   * agent approval is deliberately in-memory only (never persisted — see
+   * hyperliquid-agent-provider.tsx), so it's gone after a reload even
+   * though the wallet itself stays connected. Previously this modal only
+   * ever told the user to go approve on a different page and come back;
+   * it now offers approval right here instead. */
   agentReady: boolean;
+  agentApproving: boolean;
+  agentError: string | null;
+  onApproveAgent: () => void;
   executionState: CloseExecutionUiState;
   onConfirm: () => void;
   onClose: () => void;
@@ -181,9 +192,19 @@ export function ClosePositionModal({
         </div>
 
         {!agentReady && !isDone ? (
-          <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
-            <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-            <span>{t("hyperliquidAccount.closePositionApproveFirst")}</span>
+          <div className="mt-3 rounded-xl bg-negative-bg px-3 py-2.5">
+            <div className="flex items-start gap-1.5 text-xs text-negative">
+              <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+              <span>{t("hyperliquidAccount.closePositionApproveFirst")}</span>
+            </div>
+            {agentError ? <p className="mt-2 text-xs text-negative">{agentError}</p> : null}
+            <button
+              onClick={onApproveAgent}
+              disabled={agentApproving}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90 disabled:opacity-60"
+            >
+              {agentApproving ? <Loader2 size={14} className="animate-spin" /> : t("perpTrade.approveAgentButton")}
+            </button>
           </div>
         ) : null}
 

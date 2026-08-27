@@ -324,7 +324,7 @@ const ru: Dictionary = {
     closePositionMarket: "Рыночный",
     closePositionReduceOnly: "Только уменьшение",
     closePositionSigning: "Подтвердите в кошельке…",
-    closePositionApproveFirst: "Сначала разрешите торговлю на Hyperliquid на странице BTC-PERP или ETH-PERP, затем вернитесь, чтобы управлять этой позицией.",
+    closePositionApproveFirst: "Реальная торговля требует разового разрешения в кошельке, и оно сбрасывается каждую сессию — разрешите его ниже, чтобы управлять этой позицией.",
     closePositionPartiallyFilled: "Исполнено частично",
     closePositionPartialFillNotice: "Исполнена только часть заявки — позиция уменьшена лишь частично.",
     closePositionRequested: "Запрошено",
