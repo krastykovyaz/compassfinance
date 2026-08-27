@@ -218,10 +218,22 @@ export async function approveAgent(params: {
     signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
   } catch (err) {
     if (isUserRejectedError(err)) return { status: "wallet-rejected" };
+    // TEMPORARY diagnostic (2026-08-27): the walletChainId fix (preferring
+    // the wallet's live-tracked chain over the approved-list guess) did
+    // NOT resolve a reproduced "active chainId is different than the one
+    // provided" report even once live — meaning the chosen chainId is
+    // still wrong for at least one real wallet, for a reason not yet
+    // understood. Surfacing exactly what was chosen and why, so the next
+    // reproduction pinpoints it instead of another guess. Remove once
+    // root-caused (same pattern as the original chainId-desync
+    // investigation this session already ran once, successfully).
+    const diagnostic = `signatureChainId=0x${chainId.toString(16)} (${chainId}), source=${
+      params.walletChainId != null ? "walletChainId param" : wcChains ? "WC approved-list guess" : "getChainId() live call"
+    }, wcApprovedChains=${wcChains ? JSON.stringify(wcChains) : "none (not WalletConnect / no session)"}`;
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)}`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [${diagnostic}]`,
     };
   }
 

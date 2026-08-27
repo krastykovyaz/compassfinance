@@ -48,9 +48,8 @@ export function ClosePositionModal({
   agentReady,
   agentApproving,
   agentError,
-  onApproveAgent,
   executionState,
-  onConfirm,
+  onSubmit,
   onClose,
 }: {
   position: HyperliquidPosition;
@@ -65,15 +64,16 @@ export function ClosePositionModal({
    * signature, same as opening does. Real, reported confusion this fixes:
    * agent approval is deliberately in-memory only (never persisted — see
    * hyperliquid-agent-provider.tsx), so it's gone after a reload even
-   * though the wallet itself stays connected. Previously this modal only
-   * ever told the user to go approve on a different page and come back;
-   * it now offers approval right here instead. */
+   * though the wallet itself stays connected. Previously this modal had
+   * two separate buttons (approve, then confirm); one tap on onSubmit
+   * below now does whichever is actually needed — the PARENT owns the
+   * "approve, then immediately submit with the freshly-approved signer"
+   * chaining, this modal doesn't need to know which case it is. */
   agentReady: boolean;
   agentApproving: boolean;
   agentError: string | null;
-  onApproveAgent: () => void;
   executionState: CloseExecutionUiState;
-  onConfirm: () => void;
+  onSubmit: () => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -192,21 +192,12 @@ export function ClosePositionModal({
         </div>
 
         {!agentReady && !isDone ? (
-          <div className="mt-3 rounded-xl bg-negative-bg px-3 py-2.5">
-            <div className="flex items-start gap-1.5 text-xs text-negative">
-              <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-              <span>{t("hyperliquidAccount.closePositionApproveFirst")}</span>
-            </div>
-            {agentError ? <p className="mt-2 text-xs text-negative">{agentError}</p> : null}
-            <button
-              onClick={onApproveAgent}
-              disabled={agentApproving}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90 disabled:opacity-60"
-            >
-              {agentApproving ? <Loader2 size={14} className="animate-spin" /> : t("perpTrade.approveAgentButton")}
-            </button>
+          <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+            <span>{t("hyperliquidAccount.closePositionApproveFirst")}</span>
           </div>
         ) : null}
+        {agentError && !isDone ? <p className="mt-2 text-xs text-negative">{agentError}</p> : null}
 
         {partialFill?.isPartial ? (
           <PartialFillBanner
@@ -222,8 +213,8 @@ export function ClosePositionModal({
 
         {!isDone ? (
           <button
-            onClick={onConfirm}
-            disabled={isActive || !agentReady || !isValidSize}
+            onClick={onSubmit}
+            disabled={isActive || agentApproving || !isValidSize}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-60"
           >
             {isActive ? (
@@ -232,6 +223,11 @@ export function ClosePositionModal({
                 {executionState.stage === "signing"
                   ? t("hyperliquidAccount.closePositionSigning")
                   : t("perpTrade.submitting")}
+              </>
+            ) : agentApproving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                {t("perpTrade.approveAgentButton")}
               </>
             ) : (
               t("perpTrade.confirmAndSign")

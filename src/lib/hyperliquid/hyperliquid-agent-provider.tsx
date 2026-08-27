@@ -40,7 +40,7 @@ export type HyperliquidAgentContextValue = {
     /** wallet-provider.tsx's live-tracked WalletState.chainId — see
      * preferredApprovedChain's comment in hyperliquid-agent-wallet.ts. */
     walletChainId?: number | null;
-  }) => Promise<void>;
+  }) => Promise<AbstractWallet | null>;
   reset: () => void;
 };
 
@@ -108,7 +108,7 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
       // Discard it rather than applying an approval for the wrong
       // address; the reset the address-change effect already ran stays
       // in effect.
-      if (addressGenerationRef.current !== generation) return;
+      if (addressGenerationRef.current !== generation) return null;
 
       if (
         result.status === "wallet-rejected" ||
@@ -118,15 +118,23 @@ export function HyperliquidAgentProvider({ children }: { children: ReactNode }) 
       ) {
         setAgentStatus("error");
         setErrorMessage(describeApprovalFailure(result));
-        return;
+        return null;
       }
 
       // "pending"/"resting"/"filled" all mean Hyperliquid accepted the
       // approval — approveAgent has no fill/rest concept of its own, so
       // anything that isn't an explicit rejection means it went through.
+      const signer = createAgentSigner(keypair.privateKey);
       setAgentAddress(keypair.address);
-      setAgentWallet(createAgentSigner(keypair.privateKey));
+      setAgentWallet(signer);
       setAgentStatus("approved");
+      // Returned (not just set into state) so a caller that wants to
+      // immediately chain into a signed action — e.g. "approve, then
+      // submit this close" as one user-perceived tap — doesn't have to
+      // wait a render cycle for this same hook's own agentWallet to
+      // reflect it; React state updates aren't visible synchronously
+      // within the function that triggered them.
+      return signer;
     },
     []
   );

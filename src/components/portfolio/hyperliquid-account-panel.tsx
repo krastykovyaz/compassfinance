@@ -14,6 +14,7 @@ import { closePosition, closingOrderParamsForPosition } from "@/lib/hyperliquid/
 import { getConfiguredHip3DexNames, getHip3DexName, getHip3DexFullName } from "@/lib/hyperliquid/asset-mapping";
 import type { DexTransferDirection } from "@/lib/hyperliquid/hyperliquid-dex-transfer";
 import type { HyperliquidPosition, HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
+import type { AbstractWallet } from "@nktkas/hyperliquid/signing";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -89,8 +90,14 @@ export function HyperliquidAccountPanel() {
   // amount IS user-editable, but clamped here to the position's own full
   // size no matter what the input holds — 100%/Max = a full close, less
   // than that = a partial reduce, same single action either way.
-  async function handleConfirmClose() {
-    if (!closingPosition || !address || !agentWallet) return;
+  // `overrideWallet` lets handleSubmitClose (below) pass the just-created
+  // signer straight through when it had to approve first — the hook's
+  // own `agentWallet` won't reflect that new signer until the next
+  // render, so relying on it here would silently no-op the very submit
+  // the user just triggered.
+  async function handleConfirmClose(overrideWallet?: AbstractWallet) {
+    const wallet = overrideWallet ?? agentWallet;
+    if (!closingPosition || !address || !wallet) return;
 
     const fullSize = Math.abs(closingPosition.size);
     const requestedSize = Number(closeSizeInput) || 0;
@@ -125,7 +132,7 @@ export function HyperliquidAccountPanel() {
 
     const { side } = closingOrderParamsForPosition(closingPosition.size);
     const result = await closePosition({
-      wallet: agentWallet,
+      wallet,
       address,
       assetIndex: freshMarket.assetIndex,
       szDecimals: freshMarket.szDecimals,
@@ -152,10 +159,12 @@ export function HyperliquidAccountPanel() {
   // approval is deliberately in-memory only (see
   // hyperliquid-agent-provider.tsx), so it's gone after any reload even
   // with the wallet still connected, and previously this was the only
-  // place in the app that couldn't recover from that itself.
+  // place in the app that couldn't recover from that itself. Returns the
+  // freshly-created signer (or null on failure/rejection) so
+  // handleSubmitClose can chain straight into closing, one tap.
   async function handleApproveAgentFromPortfolio() {
     const provider = getSigningProvider();
-    if (!provider || !address) return;
+    if (!provider || !address) return null;
 
     let isTestnet = false;
     try {
@@ -167,7 +176,24 @@ export function HyperliquidAccountPanel() {
       // mainnet's hyperliquidChain classification if this fetch failed.
     }
 
-    await approveAgent({ provider, address, isTestnet, walletChainId });
+    return approveAgent({ provider, address, isTestnet, walletChainId });
+  }
+
+  // The single action Manage Position's one Confirm & Sign button
+  // triggers — approves first if needed (one real wallet signature),
+  // then immediately closes with the freshly-approved signer, or just
+  // closes directly if already approved. A rejected/failed approval
+  // stops here — closeExecutionState never moves, so the user sees
+  // agentError (already rendered in the modal) rather than a silent
+  // no-op.
+  async function handleSubmitClose() {
+    if (agentStatus === "approved" && agentWallet) {
+      await handleConfirmClose();
+      return;
+    }
+    const signer = await handleApproveAgentFromPortfolio();
+    if (!signer) return;
+    await handleConfirmClose(signer);
   }
 
   function handleCloseModalDismiss() {
@@ -494,9 +520,8 @@ export function HyperliquidAccountPanel() {
         agentReady={agentStatus === "approved"}
         agentApproving={agentStatus === "approving"}
         agentError={agentStatus === "error" ? agentError : null}
-        onApproveAgent={() => void handleApproveAgentFromPortfolio()}
         executionState={closeExecutionState}
-        onConfirm={() => void handleConfirmClose()}
+        onSubmit={() => void handleSubmitClose()}
         onClose={handleCloseModalDismiss}
       />
     ) : null}

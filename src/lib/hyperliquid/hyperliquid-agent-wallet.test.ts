@@ -406,12 +406,17 @@ describe("approveAgent — orchestration", () => {
       isTestnet: false,
     });
 
-    expect(result).toEqual({
-      status: "rejected",
-      reason: "invalid-request",
-      message:
-        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539",
-    });
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      // The underlying error message must still be present verbatim —
+      // TEMPORARY diagnostic detail (chosen signatureChainId/source/WC
+      // approved chains) is appended after it, not a replacement, so
+      // this stays a substring check rather than exact equality.
+      expect(result.message).toContain(
+        "Couldn't sign the trading approval: Active chainId is 0xa4b1 but received 0x539"
+      );
+      expect(result.message).toContain("signatureChainId=");
+    }
   });
 
   it("passes isTestnet through as hyperliquidChain: Testnet", async () => {
