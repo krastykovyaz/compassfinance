@@ -166,6 +166,34 @@ export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider,
   }
 }
 
+/** Real, reproduced bug (2026-08-28): even the live-retry fallback below
+ * kept reporting the exact chain we already believed the wallet was on —
+ * because correctWalletConnectChainIdIfDesynced writes straight into the
+ * same SDK-internal `chainId` property that a subsequent `eth_chainId`
+ * call can just echo back, so a "live" read can't reveal a genuine
+ * mismatch once we've already forced our own guess into that property.
+ * Reading state can't out-guess a wallet whose real active network only
+ * that wallet knows — so instead of asking, this actively COMMANDS the
+ * wallet onto `targetChainId` via wallet_switchEthereumChain (EIP-3326)
+ * before the one-time approveAgent signature (the only step in the whole
+ * trading flow that ever touches the real wallet again). Every chain
+ * offered here is one the session already approved at pairing time, so
+ * a compliant wallet either already-there no-ops instantly or switches
+ * without needing wallet_addEthereumChain first. Best-effort: swallows
+ * any failure (unsupported method, user rejection, unknown chain) and
+ * leaves chainId selection to fall through to the existing guess/retry
+ * logic exactly as if this had never been called. */
+async function switchToChain(provider: Eip1193Provider, targetChainId: number): Promise<void> {
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: `0x${targetChainId.toString(16)}` }],
+    });
+  } catch {
+    // Best-effort — proceed with whatever the wallet already reports.
+  }
+}
+
 /** Signs (with the user's REAL wallet — this is the only step that ever
  * pops it for the agent flow) and submits the one-time approveAgent
  * action, through the existing generic /api/hyperliquid/order route —
@@ -198,6 +226,11 @@ export async function approveAgent(params: {
     params.walletChainId ??
     (wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider));
   let source = params.walletChainId != null ? "walletChainId param" : wcChains ? "WC approved-list guess" : "getChainId() live call";
+
+  // Actively puts the wallet on `chainId` rather than just hoping the
+  // guess above matches reality — see switchToChain's own comment for
+  // why reading state stopped being trustworthy enough on its own.
+  await switchToChain(params.provider, chainId);
 
   // Builds a fresh action (own nonce) for whatever `chainId`/`source`
   // currently hold, signs it, and runs correctWalletConnectChainIdIfDesynced

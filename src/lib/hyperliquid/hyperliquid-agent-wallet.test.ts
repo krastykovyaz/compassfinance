@@ -419,6 +419,36 @@ describe("approveAgent — orchestration", () => {
     }
   });
 
+  it("actively commands the wallet onto the chosen chainId via wallet_switchEthereumChain before signing", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const provider = mockProvider();
+
+    await approveAgent({ provider, address: "0xuser", agentAddress: "0xagent", isTestnet: false, walletChainId: 43114 });
+
+    expect(provider.request).toHaveBeenCalledWith({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xa86a" }],
+    });
+  });
+
+  it("still signs successfully even when wallet_switchEthereumChain is rejected or unsupported — best-effort, never a hard failure", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const provider: Eip1193Provider = {
+      request: vi.fn(async (args: { method: string }) => {
+        if (args.method === "wallet_switchEthereumChain") throw { code: 4902, message: "Unrecognized chain" };
+        return "0xsig";
+      }),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+    };
+
+    const result = await approveAgent({ provider, address: "0xuser", agentAddress: "0xagent", isTestnet: false, walletChainId: 42161 });
+
+    expect(result.status).toBe("pending");
+  });
+
   it("self-heals a stale walletChainId: retries once with a live getChainId() value after an 'active chainId is different' rejection, and succeeds", async () => {
     signUserSignedAction
       .mockRejectedValueOnce({ code: -32602, message: "Invalid parameters: active chainId is different than the one provided." })
