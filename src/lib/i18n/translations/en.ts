@@ -366,6 +366,7 @@ const en = {
     partialFillNotice: "Only part of your order was filled — the rest wasn't executed. Your position is smaller than requested.",
     approveAgentTitle: "Enable Real Trading",
     approveAgentSubtitle: "One-time wallet approval to enable real Hyperliquid trading — future trades this session won't need a signature each time.",
+    approveAgentWalletLabel: "Wallet",
     approveAgentButton: "Enable Real Trading",
     realTradingLockedTitle: "Real trading locked",
     realTradingLockedEducationBody: "Complete the course and quiz below to unlock real trading. You can explore and practice-trade this asset in Paper Trading right away.",

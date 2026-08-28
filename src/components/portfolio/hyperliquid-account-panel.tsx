@@ -399,7 +399,7 @@ export function HyperliquidAccountPanel() {
           <p className="mt-1 text-[12px] text-dark-ink-muted">{t("hyperliquidAccount.noRecentFills")}</p>
         ) : (
           <div className="mt-1.5 space-y-1.5">
-            {fills.slice(0, 5).map((f, i) => (
+            {fills.slice(0, 10).map((f, i) => (
               <div key={`${f.coin}-${f.timestamp}-${i}`} className="flex items-center justify-between text-[12px] text-dark-ink-muted">
                 <span>
                   {f.side} {f.coin}

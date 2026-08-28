@@ -363,6 +363,7 @@ const fr: Dictionary = {
     partialFillNotice: "Seule une partie de votre ordre a été exécutée — le reste ne l'a pas été. Votre position est plus petite que demandé.",
     approveAgentTitle: "Activer le trading réel",
     approveAgentSubtitle: "Autorisation unique dans votre portefeuille pour activer le trading réel sur Hyperliquid — les prochaines transactions de cette session n'auront plus besoin d'une signature à chaque fois.",
+    approveAgentWalletLabel: "Portefeuille",
     approveAgentButton: "Activer le trading réel",
     realTradingLockedTitle: "Trading réel verrouillé",
     realTradingLockedEducationBody: "Terminez le cours et le quiz ci-dessous pour déverrouiller le trading réel. Vous pouvez explorer et vous entraîner sur cet actif en Paper Trading dès maintenant.",

@@ -51,6 +51,10 @@ import { formatCurrency, cn } from "@/lib/utils";
 const LEVERAGE_PRESETS = [2, 5, 10, 20];
 const MARGIN_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
 
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 function validationMessageKey(error: PerpOrderValidationError): string {
   switch (error) {
     case "invalid-amount":
@@ -364,6 +368,11 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium text-ink">{t("perpTrade.approveAgentTitle")}</p>
                 <p className="text-xs text-ink-muted">{t("perpTrade.approveAgentSubtitle")}</p>
+                {address ? (
+                  <p className="mt-1 text-xs font-medium text-ink-faint">
+                    {t("perpTrade.approveAgentWalletLabel")}: {shortAddress(address)}
+                  </p>
+                ) : null}
               </div>
             </div>
             {agentStatus === "error" && agentError ? (
