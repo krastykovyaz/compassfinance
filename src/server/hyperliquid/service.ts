@@ -756,6 +756,14 @@ export async function submitHyperliquidExchangeAction(
     const cacheDexFor = (d: string) => (d === "spot" ? undefined : d || undefined);
     try {
       const result = await postExchange<unknown>({ action, nonce, signature });
+      // TEMPORARY diagnostic (2026-09-03): a "spot"-sourced transfer
+      // reported success (classified "pending") but the funds never
+      // actually moved on Hyperliquid's own ledger — verified directly
+      // against their live testnet API, not just our cache. Logging the
+      // exact raw response so the next reproduction shows whether
+      // Hyperliquid itself silently no-op'd this, or classifyExchangeResponse
+      // is mis-reading a real rejection as success. Remove once root-caused.
+      console.error("[sendAsset diagnostic]", JSON.stringify({ sentAction: action, rawResult: result }));
       invalidateAccountCache(address, cacheDexFor(transfer.sourceDex));
       invalidateAccountCache(address, cacheDexFor(transfer.destinationDex));
       if (!result.ok) {
