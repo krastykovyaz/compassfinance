@@ -23,6 +23,7 @@ import {
   correctWalletConnectChainIdIfDesynced,
   walletConnectApprovedChains,
   preferredApprovedChain,
+  switchToChain,
 } from "./hyperliquid-agent-wallet";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
 import type { HyperliquidExchangeResult, HyperliquidSignature } from "./hyperliquid-types";
@@ -90,36 +91,70 @@ export async function signAndSubmitDexTransfer(params: {
 
   // Same WalletConnect chainId-desync handling every other real-wallet
   // signature in this integration needs — see hyperliquid-agent-wallet.ts
-  // for the full reasoning.
+  // for the full reasoning (switchToChain, the live-retry self-heal, and
+  // why correctWalletConnectChainIdIfDesynced alone isn't enough).
   const wcChains = walletConnectApprovedChains(params.provider);
-  const chainId =
+  let chainId =
     params.walletChainId ??
     (wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider));
-  const nonce = nextNonce();
 
-  const action = buildSendAssetAction({
-    address: params.address,
-    direction: params.direction,
-    dex: params.dex,
-    amountUsdc: params.amountUsdc,
-    usdcTokenId: params.usdcTokenId,
-    signatureChainId: `0x${chainId.toString(16)}`,
-    hyperliquidChain: params.isTestnet ? "Testnet" : "Mainnet",
-    nonce,
-  });
+  await switchToChain(params.provider, chainId);
 
-  correctWalletConnectChainIdIfDesynced(params.provider, params.walletChainId);
+  async function attemptSign() {
+    const nonce = nextNonce();
+    const action = buildSendAssetAction({
+      address: params.address,
+      direction: params.direction,
+      dex: params.dex,
+      amountUsdc: params.amountUsdc,
+      usdcTokenId: params.usdcTokenId,
+      signatureChainId: `0x${chainId.toString(16)}`,
+      hyperliquidChain: params.isTestnet ? "Testnet" : "Mainnet",
+      nonce,
+    });
+    correctWalletConnectChainIdIfDesynced(params.provider, chainId);
+    const signature = await signUserSignedAction({ wallet, action, types: SendAssetTypes });
+    return { action, nonce, signature };
+  }
 
+  let action: ReturnType<typeof buildSendAssetAction>;
+  let nonce: number;
   let signature: HyperliquidSignature;
   try {
-    signature = await signUserSignedAction({ wallet, action, types: SendAssetTypes });
-  } catch (err) {
-    if (isUserRejectedError(err)) return { status: "wallet-rejected" };
-    return {
-      status: "rejected",
-      reason: "invalid-request",
-      message: `Couldn't sign the transfer: ${signingErrorDetail(err)}`,
-    };
+    ({ action, nonce, signature } = await attemptSign());
+  } catch (firstErr) {
+    if (isUserRejectedError(firstErr)) return { status: "wallet-rejected" };
+
+    const mismatch = signingErrorDetail(firstErr).toLowerCase().includes("active chainid is different");
+    const usedLiveCall = params.walletChainId == null && !wcChains;
+    if (!mismatch || usedLiveCall) {
+      return {
+        status: "rejected",
+        reason: "invalid-request",
+        message: `Couldn't sign the transfer: ${signingErrorDetail(firstErr)}`,
+      };
+    }
+
+    const freshChainId = await getChainId(params.provider);
+    if (freshChainId === chainId) {
+      return {
+        status: "rejected",
+        reason: "invalid-request",
+        message: `Couldn't sign the transfer: ${signingErrorDetail(firstErr)}`,
+      };
+    }
+    chainId = freshChainId;
+
+    try {
+      ({ action, nonce, signature } = await attemptSign());
+    } catch (retryErr) {
+      if (isUserRejectedError(retryErr)) return { status: "wallet-rejected" };
+      return {
+        status: "rejected",
+        reason: "invalid-request",
+        message: `Couldn't sign the transfer: ${signingErrorDetail(retryErr)}`,
+      };
+    }
   }
 
   const res = await fetch("/api/hyperliquid/order", {

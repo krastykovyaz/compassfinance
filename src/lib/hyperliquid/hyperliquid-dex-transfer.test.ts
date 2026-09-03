@@ -185,6 +185,48 @@ describe("signAndSubmitDexTransfer — orchestration", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("commands the wallet onto the chosen chainId via wallet_switchEthereumChain before signing", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const provider = mockProvider();
+
+    await signAndSubmitDexTransfer({ provider, ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(provider.request).toHaveBeenCalledWith({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xa86a" }],
+    });
+  });
+
+  it("self-heals a stale walletChainId: retries once with a live getChainId() value after an 'active chainId is different' rejection", async () => {
+    signUserSignedAction
+      .mockRejectedValueOnce({ code: -32602, message: "Invalid parameters: active chainId is different than the one provided." })
+      .mockResolvedValueOnce(SIGNATURE);
+    getChainId.mockResolvedValue(42161);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    const result = await signAndSubmitDexTransfer({ provider: mockProvider(), ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(2);
+    expect(signUserSignedAction.mock.calls[0][0].action.signatureChainId).toBe("0xa86a");
+    expect(signUserSignedAction.mock.calls[1][0].action.signatureChainId).toBe("0xa4b1");
+    expect(result.status).toBe("pending");
+  });
+
+  it("does not retry when the fresh getChainId() value matches the one that just failed", async () => {
+    signUserSignedAction.mockRejectedValue({
+      code: -32602,
+      message: "Invalid parameters: active chainId is different than the one provided.",
+    });
+    getChainId.mockResolvedValue(43114);
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await signAndSubmitDexTransfer({ provider: mockProvider(), ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("rejected");
+  });
+
   it("surfaces the real underlying error message on a non-rejection signing failure", async () => {
     signUserSignedAction.mockRejectedValue(
       new Error("Failed to sign the typed data using the wallet", {

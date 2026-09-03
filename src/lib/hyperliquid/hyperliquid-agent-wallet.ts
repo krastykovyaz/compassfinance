@@ -175,15 +175,16 @@ export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider,
  * Reading state can't out-guess a wallet whose real active network only
  * that wallet knows — so instead of asking, this actively COMMANDS the
  * wallet onto `targetChainId` via wallet_switchEthereumChain (EIP-3326)
- * before the one-time approveAgent signature (the only step in the whole
- * trading flow that ever touches the real wallet again). Every chain
- * offered here is one the session already approved at pairing time, so
+ * before a real-wallet signature (approveAgent, or a sendAsset transfer
+ * — see hyperliquid-dex-transfer.ts — the only two actions in the whole
+ * trading flow that ever touch the real wallet). Every chain offered
+ * here is one the session already approved at pairing time, so
  * a compliant wallet either already-there no-ops instantly or switches
  * without needing wallet_addEthereumChain first. Best-effort: swallows
  * any failure (unsupported method, user rejection, unknown chain) and
  * leaves chainId selection to fall through to the existing guess/retry
  * logic exactly as if this had never been called. */
-async function switchToChain(provider: Eip1193Provider, targetChainId: number): Promise<void> {
+export async function switchToChain(provider: Eip1193Provider, targetChainId: number): Promise<void> {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
