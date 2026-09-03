@@ -21,11 +21,26 @@ import { formatCurrency, cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { signAndSubmitDexTransfer, type DexTransferDirection, type DexTransferResult } from "@/lib/hyperliquid/hyperliquid-dex-transfer";
+import { fetchDexWithdrawableBalance, waitForDexBalanceChange } from "@/lib/hyperliquid/hyperliquid-transfer-confirmation";
 import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 
 const PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
 
-type TransferUiState = { stage: "idle" } | { stage: "signing" | "submitting" } | { stage: "done"; result: DexTransferResult };
+// Real, reproduced bug (2026-09-03): Hyperliquid returned a clean
+// {status:"ok"} for a "spot"-sourced XYZ transfer, which this modal used
+// to treat as success outright — but the funds never actually moved,
+// verified directly against Hyperliquid's own live testnet API. "The
+// relay accepted it" and "the money arrived" are different facts; a
+// "confirming" stage now checks the second one (via
+// waitForDexBalanceChange) before ever calling this successful.
+// `confirmed` is null while there's nothing to confirm yet — either
+// still in flight, or the result never reached Hyperliquid at all
+// (wallet-rejected/rejected), in which case confirmation polling is
+// simply not applicable.
+type TransferUiState =
+  | { stage: "idle" }
+  | { stage: "signing" | "submitting" | "confirming" }
+  | { stage: "done"; result: DexTransferResult; confirmed: boolean | null };
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -36,7 +51,15 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TransferResultBanner({ result }: { result: DexTransferResult }) {
+function TransferResultBanner({
+  result,
+  confirmed,
+  isTestnet,
+}: {
+  result: DexTransferResult;
+  confirmed: boolean | null;
+  isTestnet: boolean;
+}) {
   const { t } = useTranslation();
   if (result.status === "wallet-rejected") {
     return (
@@ -47,6 +70,14 @@ function TransferResultBanner({ result }: { result: DexTransferResult }) {
     );
   }
   if (result.status === "pending" || result.status === "resting" || result.status === "filled") {
+    if (confirmed === false) {
+      return (
+        <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+          <span>{t(isTestnet ? "perpTrade.transferUnconfirmedTestnet" : "perpTrade.transferUnconfirmedMainnet")}</span>
+        </div>
+      );
+    }
     return (
       <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-positive-bg px-3 py-2.5 text-xs text-positive">
         <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
@@ -99,21 +130,40 @@ export function FundXyzModal({
   const { address, chainId: walletChainId, getSigningProvider } = useWallet();
   const [amountInput, setAmountInput] = useState("");
   const [executionState, setExecutionState] = useState<TransferUiState>({ stage: "idle" });
+  // Captured once per attempt (from the same /api/hyperliquid/markets call
+  // handleConfirm already makes) so the unconfirmed message can say
+  // Testnet vs Mainnet accurately — never assume one or the other.
+  const [isTestnet, setIsTestnet] = useState(false);
 
   const sourceBalance = direction === "fund" ? mainBalance : xyzBalance;
   const amount = Number(amountInput) || 0;
   const isValidAmount = amount > 0 && amount <= sourceBalance;
-  const isActive = executionState.stage === "signing" || executionState.stage === "submitting";
+  const isActive =
+    executionState.stage === "signing" || executionState.stage === "submitting" || executionState.stage === "confirming";
   const isDone = executionState.stage === "done";
   const result = isDone ? executionState.result : null;
-  const succeeded = result ? result.status !== "wallet-rejected" && result.status !== "rejected" : false;
+  const confirmed = isDone ? executionState.confirmed : null;
+  const reachedHyperliquid = result ? result.status !== "wallet-rejected" && result.status !== "rejected" : false;
+  // Only a confirmed real balance change counts as success — see the
+  // TransferUiState comment above for why "reached Hyperliquid" alone
+  // isn't enough anymore.
+  const succeeded = reachedHyperliquid && confirmed === true;
 
+  // Deliberately only a live PREVIEW of what submitting would do, shown
+  // while the amount is still being chosen — hidden once done (see
+  // render below) so it can never be mistaken for a confirmed result,
+  // per the "don't imply the local balance changed until confirmation"
+  // rule above.
   const resultingXyzBalance = direction === "fund" ? xyzBalance + amount : Math.max(xyzBalance - amount, 0);
   const resultingMainBalance = direction === "fund" ? Math.max(mainBalance - amount, 0) : mainBalance + amount;
 
   function handleClose() {
-    if (isActive) return; // don't allow closing mid-signature/submission
-    if (succeeded) onSuccess();
+    if (isActive) return; // don't allow closing mid-signature/submission/confirmation
+    // Always refresh once a transfer reached Hyperliquid, confirmed or
+    // not — refresh() re-fetches REAL current state from Hyperliquid, so
+    // this is never an optimistic/premature balance change; an
+    // unconfirmed transfer simply refreshes back to the unchanged truth.
+    if (reachedHyperliquid) onSuccess();
     onClose();
   }
 
@@ -123,21 +173,23 @@ export function FundXyzModal({
 
     setExecutionState({ stage: "signing" });
 
-    let isTestnet = false;
+    let testnet = false;
     let usdcTokenId: string | null = null;
     try {
       const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
       const json = (await res.json()) as { isTestnet?: boolean; usdcTokenId?: string | null; result: HyperliquidMarketsFetchResult };
-      isTestnet = Boolean(json.isTestnet);
+      testnet = Boolean(json.isTestnet);
       usdcTokenId = json.usdcTokenId ?? null;
     } catch {
       // usdcTokenId stays null — handled below
     }
+    setIsTestnet(testnet);
 
     if (!usdcTokenId) {
       setExecutionState({
         stage: "done",
         result: { status: "rejected", reason: "invalid-request", message: t("perpTrade.priceUnavailable") },
+        confirmed: null,
       });
       return;
     }
@@ -150,12 +202,28 @@ export function FundXyzModal({
       dex,
       amountUsdc: amountInput,
       usdcTokenId,
-      isTestnet,
+      isTestnet: testnet,
       walletChainId,
       isUnifiedAccount,
     });
 
-    setExecutionState({ stage: "done", result });
+    if (result.status === "wallet-rejected" || result.status === "rejected") {
+      setExecutionState({ stage: "done", result, confirmed: null });
+      return;
+    }
+
+    setExecutionState({ stage: "confirming" });
+    // Real balance actually landing where it was sent — never just
+    // "Hyperliquid accepted the relay request" — see the module header
+    // comment in hyperliquid-transfer-confirmation.ts.
+    const confirmDex = direction === "fund" ? dex : undefined;
+    const baseline = direction === "fund" ? xyzBalance : mainBalance;
+    const balanceChanged = await waitForDexBalanceChange({
+      fetchBalance: () => fetchDexWithdrawableBalance(address, confirmDex),
+      baseline,
+    });
+
+    setExecutionState({ stage: "done", result, confirmed: balanceChanged });
   }
 
   const title = direction === "fund" ? t("perpTrade.fundXyzTitle") : t("perpTrade.withdrawXyzTitle");
@@ -238,10 +306,12 @@ export function FundXyzModal({
           </div>
         </div>
 
-        <div className="mt-3 space-y-2.5 rounded-2xl border border-border p-4">
-          <Row label={t("perpTrade.mainHyperliquidBalance")} value={formatCurrency(resultingMainBalance)} />
-          <Row label={`${dexFullName} ${t("perpTrade.xyzTradingBalance")}`} value={formatCurrency(resultingXyzBalance)} />
-        </div>
+        {!isDone ? (
+          <div className="mt-3 space-y-2.5 rounded-2xl border border-border p-4">
+            <Row label={t("perpTrade.mainHyperliquidBalance")} value={formatCurrency(resultingMainBalance)} />
+            <Row label={`${dexFullName} ${t("perpTrade.xyzTradingBalance")}`} value={formatCurrency(resultingXyzBalance)} />
+          </div>
+        ) : null}
 
         <p className="mt-3 text-[12px] leading-snug text-ink-faint">{t("perpTrade.crossDexExplainer")}</p>
 
@@ -252,7 +322,7 @@ export function FundXyzModal({
           </div>
         ) : null}
 
-        {result ? <TransferResultBanner result={result} /> : null}
+        {result ? <TransferResultBanner result={result} confirmed={confirmed} isTestnet={isTestnet} /> : null}
 
         {!isDone ? (
           <button
@@ -263,7 +333,11 @@ export function FundXyzModal({
             {isActive ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                {executionState.stage === "signing" ? t("perpTrade.transferSigning") : t("perpTrade.submitting")}
+                {executionState.stage === "signing"
+                  ? t("perpTrade.transferSigning")
+                  : executionState.stage === "confirming"
+                    ? t("perpTrade.transferAwaitingConfirmation")
+                    : t("perpTrade.submitting")}
               </>
             ) : (
               t("perpTrade.confirmAndSign")
