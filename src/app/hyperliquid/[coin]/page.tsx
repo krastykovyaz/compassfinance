@@ -584,6 +584,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
           dexFullName={dexFullName}
           mainBalance={mainBalance}
           xyzBalance={availableBalance}
+          isUnifiedAccount={snapshot?.isUnifiedAccount ?? false}
           onClose={() => setFundModalDirection(null)}
           onSuccess={() => {
             refreshAccount();

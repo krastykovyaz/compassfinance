@@ -1585,6 +1585,93 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       expect(postExchange).not.toHaveBeenCalled();
     });
 
+    it("accepts \"spot\" as a valid sourceDex — the real Hyperliquid value a Unified Account transfer must use instead of \"\"", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "792.50", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "792.50"]],
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "spot", destinationDex: "xyz", amount: "100" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "pending" });
+      expect(postExchange).toHaveBeenCalled();
+    });
+
+    it("checks the real spot balance (not clearinghouseState) for a \"spot\" source, and rejects when it's insufficient", async () => {
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "10", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "10"]],
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "spot", destinationDex: "xyz", amount: "100" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+      expect(fetchClearinghouseState).not.toHaveBeenCalled();
+    });
+
+    it("rejects a \"spot\" source when the account isn't actually unified — can't verify a balance that doesn't apply", async () => {
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: null });
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "spot", destinationDex: "xyz" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "rejected", reason: "invalid-request", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("invalidates the main (not a literal \"spot\") account cache entry after a \"spot\"-sourced transfer", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "792.50", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "792.50"]],
+        },
+      });
+
+      await getHyperliquidAccount("0xabc"); // populate the real "main" cache entry
+      const callsBefore = fetchClearinghouseState.mock.calls.length;
+
+      await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "spot", destinationDex: "xyz", amount: "100" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      await getHyperliquidAccount("0xabc"); // must NOT be served stale — "spot" must map to the real "main" cache key
+      expect(fetchClearinghouseState.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+
     it("rejects a transfer whose source and destination are the same", async () => {
       const result = await submitHyperliquidExchangeAction(
         USER_ID,

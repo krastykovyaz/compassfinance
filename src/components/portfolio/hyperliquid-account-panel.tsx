@@ -505,6 +505,7 @@ export function HyperliquidAccountPanel() {
         dexFullName={xyzDexFullName}
         mainBalance={snapshot.withdrawableBalance}
         xyzBalance={xyzAccount.snapshot?.withdrawableBalance ?? 0}
+        isUnifiedAccount={snapshot.isUnifiedAccount}
         onClose={() => setFundModalDirection(null)}
         onSuccess={() => {
           refresh();

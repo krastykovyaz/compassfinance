@@ -386,7 +386,14 @@ export async function getHyperliquidAccount(address: string, dex?: string): Prom
         .map((ap) => normalizePosition(ap.position))
         .filter((p): p is HyperliquidPosition => p !== null);
 
-      return { accountValue, withdrawableBalance, totalMarginUsed, positions, timestamp: Date.now() };
+      return {
+        accountValue,
+        withdrawableBalance,
+        totalMarginUsed,
+        positions,
+        timestamp: Date.now(),
+        isUnifiedAccount: override !== null,
+      };
     });
 
     return { status: "ok", account };
@@ -678,8 +685,14 @@ export async function submitHyperliquidExchangeAction(
     if (transfer.destination.toLowerCase() !== address.toLowerCase()) {
       return { status: "rejected", reason: "invalid-transfer", message: "Transfers may only be made to your own address" };
     }
+    // "spot" is a real, distinct sendAsset value (@nktkas/hyperliquid's
+    // own sendAsset.d.ts: `"" for default USDC perp DEX, "spot" for
+    // spot`) — required, not optional, for a Unified Account Mode wallet
+    // (real, reproduced: Hyperliquid rejects a plain "" source for one
+    // with "Unified account only supports sending assets through spot").
+    // See dexPairForDirection's comment in hyperliquid-dex-transfer.ts.
     const configuredDexes = new Set(getConfiguredHip3DexNames());
-    const isKnownDex = (d: string) => d === "" || configuredDexes.has(d);
+    const isKnownDex = (d: string) => d === "" || d === "spot" || configuredDexes.has(d);
     if (!isKnownDex(transfer.sourceDex) || !isKnownDex(transfer.destinationDex)) {
       return { status: "rejected", reason: "invalid-transfer", message: "Unknown transfer source or destination" };
     }
@@ -698,40 +711,60 @@ export async function submitHyperliquidExchangeAction(
     // — same UX-courtesy pattern as the order pre-flight check (never the
     // real security boundary; Hyperliquid's own ledger is authoritative
     // and will reject an actually-overdrawn transfer regardless).
-    const sourceDexParam = transfer.sourceDex || undefined;
-    const sourceState = await fetchClearinghouseState(address, sourceDexParam);
-    if (!sourceState.ok) {
-      return { status: "rejected", reason: "invalid-request", message: "Couldn't verify your balance" };
-    }
-    let sourceWithdrawable = toNumber(sourceState.data.withdrawable);
-    // Real, reported bug: a Unified Account Mode wallet funding XYZ from
-    // its main balance was rejected as insufficient even though the
-    // panel showed a real, sufficient balance — same stale-classic-
-    // clearinghouseState issue getHyperliquidAccount and the order
-    // pre-flight check already override for (see
-    // getUnifiedAccountOverride's own comment). This check reused the
-    // classic value directly and never applied that override, so it was
-    // the one balance check in the whole integration still reading it.
-    // Same "main dex only" scoping as those two callers.
-    const sourceOverride = sourceDexParam ? null : await getUnifiedAccountOverride(address);
-    if (sourceOverride) {
-      sourceWithdrawable = sourceOverride.withdrawableBalance;
+    //
+    // "spot" isn't a real HIP-3 perp dex clearinghouseState can be
+    // queried for — it's sendAsset's own vocabulary for "this account's
+    // Unified balance" (see above), which is exactly what
+    // getUnifiedAccountOverride already resolves via the real spot
+    // clearinghouse. Every other value (""/a HIP-3 dex name) keeps using
+    // the classic clearinghouseState check, with the same override this
+    // check used to skip (real, reported bug: a Unified Account wallet
+    // funding XYZ from its main balance was rejected as insufficient even
+    // though the panel showed a real, sufficient balance, because this
+    // was the one balance check in the whole integration still reading
+    // the stale classic value directly — see getUnifiedAccountOverride's
+    // own comment).
+    let sourceWithdrawable: number;
+    if (transfer.sourceDex === "spot") {
+      const spot = await getUnifiedAccountOverride(address);
+      if (!spot) {
+        return { status: "rejected", reason: "invalid-request", message: "Couldn't verify your balance" };
+      }
+      sourceWithdrawable = spot.withdrawableBalance;
+    } else {
+      const sourceDexParam = transfer.sourceDex || undefined;
+      const sourceState = await fetchClearinghouseState(address, sourceDexParam);
+      if (!sourceState.ok) {
+        return { status: "rejected", reason: "invalid-request", message: "Couldn't verify your balance" };
+      }
+      sourceWithdrawable = toNumber(sourceState.data.withdrawable);
+      const sourceOverride = sourceDexParam ? null : await getUnifiedAccountOverride(address);
+      if (sourceOverride) {
+        sourceWithdrawable = sourceOverride.withdrawableBalance;
+      }
     }
     if (!Number.isNaN(sourceWithdrawable) && amount > sourceWithdrawable) {
       return { status: "rejected", reason: "insufficient-balance", message: "Amount exceeds your available balance" };
     }
 
+    // "spot" maps back to the same "main" cache entry getHyperliquidAccount
+    // itself uses (dex=undefined) — it was never a real per-dex cache key,
+    // just sendAsset's own vocabulary for the main/unified balance (see
+    // above). Invalidating "spot" literally would silently miss the
+    // account's actual cache entry, leaving the panel showing a stale
+    // pre-transfer balance.
+    const cacheDexFor = (d: string) => (d === "spot" ? undefined : d || undefined);
     try {
       const result = await postExchange<unknown>({ action, nonce, signature });
-      invalidateAccountCache(address, transfer.sourceDex || undefined);
-      invalidateAccountCache(address, transfer.destinationDex || undefined);
+      invalidateAccountCache(address, cacheDexFor(transfer.sourceDex));
+      invalidateAccountCache(address, cacheDexFor(transfer.destinationDex));
       if (!result.ok) {
         return { status: "network-failure", message: result.message };
       }
       return classifyExchangeResponse(result.data);
     } catch (err) {
-      invalidateAccountCache(address, transfer.sourceDex || undefined);
-      invalidateAccountCache(address, transfer.destinationDex || undefined);
+      invalidateAccountCache(address, cacheDexFor(transfer.sourceDex));
+      invalidateAccountCache(address, cacheDexFor(transfer.destinationDex));
       const message = err instanceof Error ? err.message : "Unexpected error submitting to Hyperliquid";
       return { status: "network-failure", message };
     }

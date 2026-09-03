@@ -76,6 +76,7 @@ export function FundXyzModal({
   dexFullName,
   mainBalance,
   xyzBalance,
+  isUnifiedAccount,
   onClose,
   onSuccess,
 }: {
@@ -84,6 +85,10 @@ export function FundXyzModal({
   dexFullName: string;
   mainBalance: number;
   xyzBalance: number;
+  /** From the main account's own snapshot (never dex-scoped — see its
+   * own comment) — see hyperliquid-dex-transfer.ts's dexPairForDirection
+   * for why sendAsset needs this. */
+  isUnifiedAccount: boolean;
   onClose: () => void;
   /** Called after a transfer that reached Hyperliquid (success or
    * ambiguous network-failure) — never for a wallet-rejection or a
@@ -147,6 +152,7 @@ export function FundXyzModal({
       usdcTokenId,
       isTestnet,
       walletChainId,
+      isUnifiedAccount,
     });
 
     setExecutionState({ stage: "done", result });
