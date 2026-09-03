@@ -1671,6 +1671,68 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
     });
 
+    it("uses the Unified Account Mode spot balance override for a main→xyz transfer, not the stale classic withdrawable — real, reported bug: a well-funded unified-account wallet got rejected as insufficient", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      // Classic clearinghouseState says withdrawable=0 — same stale value
+      // getUnifiedAccountOverride exists to correct elsewhere.
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "0", time: Date.now() },
+      });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "792.50", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "792.50"]],
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction({ amount: "100" }), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "pending" });
+      expect(postExchange).toHaveBeenCalled();
+    });
+
+    it("still rejects a main→xyz transfer that exceeds the Unified Account Mode spot balance, not just the classic one", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "10000", time: Date.now() },
+      });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: {
+          balances: [{ coin: "USDC", token: 0, total: "10", hold: "0.0", entryNtl: "0.0" }],
+          tokenToAvailableAfterMaintenance: [[0, "10"]],
+        },
+      });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", transferAction({ amount: "100" }), NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("does not apply the Unified Account Mode override when the source is a HIP-3 dex, not the main dex — same scoping as getHyperliquidAccount", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "default" } } });
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "1000", time: Date.now() },
+      });
+
+      const result = await submitHyperliquidExchangeAction(
+        USER_ID,
+        "0xabc",
+        transferAction({ sourceDex: "xyz", destinationDex: "", amount: "100" }),
+        NONCE,
+        SIGNATURE
+      );
+
+      expect(result).toEqual({ status: "pending" });
+      expect(fetchUserAbstraction).not.toHaveBeenCalled();
+    });
+
     it("rejects a malformed transfer shape (missing fields) before ever contacting Hyperliquid", async () => {
       const result = await submitHyperliquidExchangeAction(
         USER_ID,

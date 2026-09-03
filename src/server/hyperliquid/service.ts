@@ -698,11 +698,25 @@ export async function submitHyperliquidExchangeAction(
     // — same UX-courtesy pattern as the order pre-flight check (never the
     // real security boundary; Hyperliquid's own ledger is authoritative
     // and will reject an actually-overdrawn transfer regardless).
-    const sourceState = await fetchClearinghouseState(address, transfer.sourceDex || undefined);
+    const sourceDexParam = transfer.sourceDex || undefined;
+    const sourceState = await fetchClearinghouseState(address, sourceDexParam);
     if (!sourceState.ok) {
       return { status: "rejected", reason: "invalid-request", message: "Couldn't verify your balance" };
     }
-    const sourceWithdrawable = toNumber(sourceState.data.withdrawable);
+    let sourceWithdrawable = toNumber(sourceState.data.withdrawable);
+    // Real, reported bug: a Unified Account Mode wallet funding XYZ from
+    // its main balance was rejected as insufficient even though the
+    // panel showed a real, sufficient balance — same stale-classic-
+    // clearinghouseState issue getHyperliquidAccount and the order
+    // pre-flight check already override for (see
+    // getUnifiedAccountOverride's own comment). This check reused the
+    // classic value directly and never applied that override, so it was
+    // the one balance check in the whole integration still reading it.
+    // Same "main dex only" scoping as those two callers.
+    const sourceOverride = sourceDexParam ? null : await getUnifiedAccountOverride(address);
+    if (sourceOverride) {
+      sourceWithdrawable = sourceOverride.withdrawableBalance;
+    }
     if (!Number.isNaN(sourceWithdrawable) && amount > sourceWithdrawable) {
       return { status: "rejected", reason: "insufficient-balance", message: "Amount exceeds your available balance" };
     }
