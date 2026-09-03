@@ -30,7 +30,7 @@ export function BottomNavigation() {
   // content area so the bar never overlaps the last bit of content.
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 backdrop-blur-sm"
+      className="fixed inset-x-0 bottom-0 z-20 rounded-t-[20px] border-t border-border bg-surface/95 shadow-[0_-2px_12px_rgba(16,24,40,0.06)] backdrop-blur-sm"
       aria-label="Primary"
     >
       <ul className="mx-auto flex max-w-[420px] items-stretch justify-between px-2 pb-[calc(env(safe-area-inset-bottom)+6px)] pt-2">
