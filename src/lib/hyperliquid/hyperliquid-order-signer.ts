@@ -35,7 +35,23 @@ import type { HyperliquidExchangeResult, HyperliquidSignature } from "./hyperliq
 // "market" order (Hyperliquid has no true market-order type — this is
 // submitted as an IOC-flavored limit order bounded by this tolerance, its
 // own frontend's exact convention, see buildMarketOrderAction below).
+// Deliberately conservative — this is the value real (mainnet) trading
+// uses, where markets are actually liquid and a wide tolerance would mean
+// a bad fill during a real gap/flash move, not a feature.
 export const SLIPPAGE_TOLERANCE = 0.01;
+
+// Real, reproduced (2026-09-04): a correctly-signed, correctly-margined
+// xyz:AAPL testnet order was rejected by Hyperliquid itself — "Order
+// could not immediately match against any resting orders" — because
+// testnet's thin order book (bid $300 / ask $340 against a ~$321 mark)
+// needed ~6% of headroom to cross, far past SLIPPAGE_TOLERANCE's 1%.
+// That's the slippage guard doing exactly its job; loosening it globally
+// would make mainnet orders willing to chase a real gap, which is the
+// wrong tradeoff there. This wider tolerance is TESTNET-ONLY (never
+// touches SLIPPAGE_TOLERANCE or mainnet behavior) — testnet liquidity is
+// expected to be this thin, and the whole point of testnet is completing
+// a real fund → trade → close cycle before ever touching mainnet funds.
+export const TESTNET_SLIPPAGE_TOLERANCE = 0.1;
 
 // ---------------------------------------------------------------------------
 // Pure builders — no wallet, no fetch. Directly testable.
@@ -276,6 +292,7 @@ export async function signAndSubmitPerpOrder(params: {
     markPrice: params.markPrice,
     sizeUnits,
     szDecimals: params.szDecimals,
+    slippage: params.isTestnet ? TESTNET_SLIPPAGE_TOLERANCE : SLIPPAGE_TOLERANCE,
   });
   const orderNonce = nextNonce(leverageNonce);
 
@@ -325,6 +342,7 @@ export async function closePosition(params: {
     sizeUnits: params.sizeUnits,
     szDecimals: params.szDecimals,
     reduceOnly: true,
+    slippage: params.isTestnet ? TESTNET_SLIPPAGE_TOLERANCE : SLIPPAGE_TOLERANCE,
   });
   const nonce = nextNonce();
 

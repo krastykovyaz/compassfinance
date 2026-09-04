@@ -280,6 +280,28 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
     expect(result).toEqual({ status: "resting", orderId: 1 });
   });
 
+  it("uses the wider TESTNET_SLIPPAGE_TOLERANCE for the order's limit price when isTestnet — real, reproduced bug: a correctly-signed testnet order was rejected because the 1% mainnet tolerance couldn't reach a thin/wide testnet book", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "resting", orderId: 1 } })));
+
+    await signAndSubmitPerpOrder({ ...BASE_PARAMS, isTestnet: true });
+
+    const orderCall = signL1Action.mock.calls[1][0];
+    // long: markPrice * (1 + TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 1.1
+    expect(orderCall.action.orders[0].p).toBe("66000");
+  });
+
+  it("still uses the conservative SLIPPAGE_TOLERANCE for mainnet — never widened just because it was widened for testnet", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "resting", orderId: 1 } })));
+
+    await signAndSubmitPerpOrder({ ...BASE_PARAMS, isTestnet: false });
+
+    const orderCall = signL1Action.mock.calls[1][0];
+    // long: markPrice * (1 + SLIPPAGE_TOLERANCE) = 60000 * 1.01
+    expect(orderCall.action.orders[0].p).toBe("60600");
+  });
+
   it("passes isTestnet through to both signL1Action calls", async () => {
     signL1Action.mockResolvedValue(SIGNATURE);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
@@ -518,6 +540,28 @@ describe("closePosition — orchestration", () => {
     expect(signed.action.type).toBe("order");
     expect((signed.action.orders as Record<string, unknown>[])[0].r).toBe(true);
     expect(result).toEqual({ status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 });
+  });
+
+  it("uses the wider TESTNET_SLIPPAGE_TOLERANCE for the close order's limit price when isTestnet, same as opening", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 } })));
+
+    await closePosition({ ...CLOSE_PARAMS, isTestnet: true });
+
+    const signed = signL1Action.mock.calls[0][0];
+    // short: markPrice * (1 - TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 0.9
+    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("54000");
+  });
+
+  it("still uses the conservative SLIPPAGE_TOLERANCE for a mainnet close", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 } })));
+
+    await closePosition({ ...CLOSE_PARAMS, isTestnet: false });
+
+    const signed = signL1Action.mock.calls[0][0];
+    // short: markPrice * (1 - SLIPPAGE_TOLERANCE) = 60000 * 0.99
+    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("59400");
   });
 
   it("classifies a wallet rejection distinctly, without ever calling fetch", async () => {
