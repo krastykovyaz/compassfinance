@@ -51,7 +51,19 @@ export const SLIPPAGE_TOLERANCE = 0.01;
 // touches SLIPPAGE_TOLERANCE or mainnet behavior) — testnet liquidity is
 // expected to be this thin, and the whole point of testnet is completing
 // a real fund → trade → close cycle before ever touching mainnet funds.
-export const TESTNET_SLIPPAGE_TOLERANCE = 0.1;
+//
+// First tried 0.1 (10%) — Hyperliquid rejected that too, with a DIFFERENT
+// message ("Price too far from oracle"): a separate protection, capping
+// how far a marketable order's own limit price may stray from the
+// oracle, independent of the order-book-matching check above. Live oracle
+// vs. mark for xyz:AAPL were identical ($320.83, 0% deviation) — the
+// rejection was purely about our own limit price being too aggressive,
+// not a real oracle/mark mismatch. 0.07 sits between the two confirmed
+// bounds: above the ~6% needed to cross this specific thin book, below
+// the 10% that tripped the oracle-deviation cap. Still empirical — the
+// real cap's exact value isn't documented anywhere in the SDK, so this
+// may need one more adjustment if a different asset's book requires it.
+export const TESTNET_SLIPPAGE_TOLERANCE = 0.07;
 
 // ---------------------------------------------------------------------------
 // Pure builders — no wallet, no fetch. Directly testable.

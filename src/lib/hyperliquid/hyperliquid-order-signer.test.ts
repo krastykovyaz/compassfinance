@@ -287,8 +287,8 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
     await signAndSubmitPerpOrder({ ...BASE_PARAMS, isTestnet: true });
 
     const orderCall = signL1Action.mock.calls[1][0];
-    // long: markPrice * (1 + TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 1.1
-    expect(orderCall.action.orders[0].p).toBe("66000");
+    // long: markPrice * (1 + TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 1.07
+    expect(orderCall.action.orders[0].p).toBe("64200");
   });
 
   it("still uses the conservative SLIPPAGE_TOLERANCE for mainnet — never widened just because it was widened for testnet", async () => {
@@ -549,8 +549,10 @@ describe("closePosition — orchestration", () => {
     await closePosition({ ...CLOSE_PARAMS, isTestnet: true });
 
     const signed = signL1Action.mock.calls[0][0];
-    // short: markPrice * (1 - TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 0.9
-    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("54000");
+    // short: markPrice * (1 - TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 0.93,
+    // which floating-point arithmetic actually lands on 55799.999... —
+    // formatPrice truncates, not rounds, so 55799 (not 55800) is correct.
+    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("55799");
   });
 
   it("still uses the conservative SLIPPAGE_TOLERANCE for a mainnet close", async () => {
