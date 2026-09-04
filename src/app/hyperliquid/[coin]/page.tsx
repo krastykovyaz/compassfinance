@@ -15,7 +15,7 @@
 // real, connected Hyperliquid account, a completely separate system by
 // design (see the Hyperliquid-integration isolation tests).
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert, Lock, BookOpen, ArrowLeftRight } from "lucide-react";
@@ -80,7 +80,23 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
   const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   const { markets } = useHyperliquidMarkets();
-  const { learningProgress, getBlockingInvestmentStage } = useProgress();
+  const { learningProgress, getBlockingInvestmentStage, resetProgress } = useProgress();
+
+  // Real, reported bug: a user who completes a practice trade on the
+  // asset page, then navigates here via client-side routing (no full
+  // page reload), still saw this page's real-trading gate as locked —
+  // ProgressProvider fetches learningProgress (specifically
+  // practiceTradedAssetIds, real-trading-access.ts's third requirement)
+  // exactly once per mount/session, with nothing anywhere in the app
+  // telling it to refetch after a practice trade completes. Despite the
+  // name, resetProgress() is a non-destructive DB refetch for a signed-in
+  // user (see its own comment in progress-store.tsx) — this page always
+  // requires sign-in to be reached at all, so the genuinely destructive,
+  // anonymous-only branch of that same function is never in play here.
+  useEffect(() => {
+    resetProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [side, setSide] = useState<PerpSide>("long");
   const [marginInput, setMarginInput] = useState("");
