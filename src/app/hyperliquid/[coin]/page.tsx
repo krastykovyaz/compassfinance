@@ -44,7 +44,7 @@ import {
   type PerpSide,
 } from "@/lib/hyperliquid/perp-order-calculator";
 import { signAndSubmitPerpOrder, computeOrderSizeUnits } from "@/lib/hyperliquid/hyperliquid-order-signer";
-import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
+import type { HyperliquidMarketsFetchResult, HyperliquidOrderBookFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -214,6 +214,28 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     // against what was really requested for partial-fill detection.
     const requestedSize = computeOrderSizeUnits(marginUsdc, leverage, freshMarket.price);
 
+    // Fresh order book right alongside freshMarket above — testnet-only
+    // input to computeTestnetDynamicSlippage (see its own comment): the
+    // smallest slippage that could actually cross the CURRENT book,
+    // instead of guessing a fixed percentage that's either too tight to
+    // fill or wide enough to trip Hyperliquid's oracle-deviation cap.
+    // long crosses the best ASK; short crosses the best BID. A failed/
+    // empty fetch just leaves this null, falling back to the existing
+    // flat TESTNET_SLIPPAGE_TOLERANCE exactly as before this existed.
+    let bestOpposingPrice: number | null = null;
+    if (isTestnet) {
+      try {
+        const bookRes = await fetch(`/api/hyperliquid/orderbook?coin=${coin}`, { signal: AbortSignal.timeout(10_000) });
+        const bookJson = (await bookRes.json()) as { result: HyperliquidOrderBookFetchResult };
+        if (bookJson.result.status === "ok") {
+          const level = side === "long" ? bookJson.result.book.asks[0] : bookJson.result.book.bids[0];
+          bestOpposingPrice = level?.price ?? null;
+        }
+      } catch {
+        // bestOpposingPrice stays null — falls back to the flat testnet tolerance
+      }
+    }
+
     const result = await signAndSubmitPerpOrder({
       wallet: agentWallet,
       address,
@@ -224,6 +246,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       leverage,
       markPrice: freshMarket.price,
       isTestnet,
+      bestOpposingPrice,
       onStageChange: (stage) => setExecutionState({ stage }),
     });
 
