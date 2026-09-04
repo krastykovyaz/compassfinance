@@ -255,14 +255,16 @@ export default function AssetDetailPage({
             disabled={livePrice == null}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-50"
           >
-            {livePrice == null ? t("market.marketDataUnavailableButton") : `${t("market.buyLabel")} ${asset.name}`}
+            {livePrice == null
+              ? t("market.marketDataUnavailableButton")
+              : `${t("market.buyLabel")} ${asset.trackingEtfSymbol ?? asset.name}`}
           </button>
         )}
       </div>
 
       {showTradeSheet && livePrice != null ? (
         <TradeSheet
-          assetName={asset.name}
+          assetName={asset.trackingEtfSymbol ?? asset.name}
           entryPrice={livePrice}
           maxAmountUsdc={account?.cashBalance ?? 0}
           onConfirm={handleConfirmBuy}
