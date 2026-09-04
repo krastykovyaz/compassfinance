@@ -1424,8 +1424,8 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
       expect(postExchange).not.toHaveBeenCalled();
     });
 
-    it("never applies the Unified Account Mode override to an xyz order's balance check", async () => {
-      mockAccountBalance("0"); // classic clearinghouseState for the (unused here) main dex
+    it("EXPERIMENTAL (2026-09-04, unverified live): applies the Unified Account Mode override to an xyz order's balance check too, rescuing an underfunded isolated pool — Hyperliquid's own testnet UI showed a unified wallet's full main balance as directly usable on a HIP-3 dex page with no transfer ever performed; Hyperliquid's own ledger remains the real authority regardless of what this pre-flight concludes", async () => {
+      postExchange.mockResolvedValue({ ok: true, data: { status: "ok", response: { type: "order", data: {} } } });
       fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) =>
         dex === "xyz"
           ? {
@@ -1442,8 +1442,42 @@ describe("submitHyperliquidExchangeAction — real order execution (Phase 4)", (
 
       const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
 
-      // The main dex's unified $999 must NEVER rescue an underfunded xyz order.
+      expect(result.status).not.toBe("rejected");
+    });
+
+    it("still rejects an xyz order when even the Unified Account Mode override's balance is insufficient", async () => {
+      fetchClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" }, withdrawable: "0", time: Date.now() },
+      });
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: "unifiedAccount" });
+      fetchSpotClearinghouseState.mockResolvedValue({
+        ok: true,
+        data: { balances: [{ coin: "USDC", token: 0, total: "1.0", hold: "0.0", entryNtl: "0.0" }], tokenToAvailableAfterMaintenance: [[0, "1.0"]] },
+      });
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
       expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
+    });
+
+    it("keeps checking the xyz dex's own isolated balance for a classic (non-unified) account, unaffected by this change", async () => {
+      fetchClearinghouseState.mockImplementation(async (_address: string, dex?: string) => ({
+        ok: true,
+        data: {
+          assetPositions: [],
+          marginSummary: { accountValue: dex === "xyz" ? "1" : "1000000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+          withdrawable: dex === "xyz" ? "1" : "1000000",
+          time: Date.now(),
+        },
+      }));
+      fetchUserAbstraction.mockResolvedValue({ ok: true, data: null }); // not unified
+
+      const result = await submitHyperliquidExchangeAction(USER_ID, "0xabc", XYZ_ORDER_ACTION, NONCE, SIGNATURE);
+
+      expect(result).toEqual({ status: "rejected", reason: "insufficient-balance", message: expect.any(String) });
+      expect(postExchange).not.toHaveBeenCalled();
     });
 
     it("still applies the Phase 7 education gate — locked without a completed course/quiz/practice trade for aapl specifically", async () => {

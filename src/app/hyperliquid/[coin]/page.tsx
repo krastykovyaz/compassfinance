@@ -108,7 +108,18 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const xyzAccount = useHyperliquidDexAccount(dex);
 
   const mainBalance = snapshot?.withdrawableBalance ?? 0;
-  const availableBalance = dex ? (xyzAccount.snapshot?.withdrawableBalance ?? 0) : mainBalance;
+  // EXPERIMENTAL (2026-09-04, unverified): Hyperliquid's own testnet UI
+  // showed a Unified Account Mode wallet's full main balance as directly
+  // usable on a HIP-3 dex's page with no prior transfer — see
+  // service.ts's matching order-pre-flight comment for the full context.
+  // Falls back to the isolated xyz pool's own balance for a classic
+  // account, unchanged. Revert to always using the isolated balance if a
+  // live order proves this wrong.
+  const availableBalance = dex
+    ? snapshot?.isUnifiedAccount
+      ? mainBalance
+      : (xyzAccount.snapshot?.withdrawableBalance ?? 0)
+    : mainBalance;
   const maxLeverage = market?.maxLeverage ?? 1;
   const marginUsdc = Number(marginInput) || 0;
 

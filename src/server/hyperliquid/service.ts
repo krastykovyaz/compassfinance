@@ -835,19 +835,24 @@ export async function submitHyperliquidExchangeAction(
     // own margin engine is authoritative and will reject an actually-
     // undermargined order regardless of what this check concludes.
     //
-    // Phase 8: a HIP-3 asset's margin lives in that dex's own ISOLATED
-    // pool — checking the main dex's balance here would be checking the
-    // wrong number entirely (verified live: the same address holds a
-    // genuinely different balance per dex). Unified Account Mode's
-    // spot<->perp override only ever applies to the main dex, so it's
-    // skipped for a dex-qualified asset, same reasoning as
-    // getHyperliquidAccount.
+    // Phase 8 originally assumed a HIP-3 asset's margin always lives in
+    // that dex's own ISOLATED pool, funded via a separate sendAsset
+    // transfer — verified live for a CLASSIC account (a genuinely
+    // different balance per dex). EXPERIMENTAL (2026-09-04, unverified):
+    // Hyperliquid's own testnet UI showed a Unified Account Mode wallet's
+    // full main balance as "Available to Trade" directly on a HIP-3
+    // dex's page, with no transfer ever performed — casting real doubt on
+    // "the override never applies to an isolated dex" for THAT account
+    // type specifically. Applying the override regardless of `dex` now,
+    // to let Hyperliquid's own ledger (the real authority either way)
+    // settle this directly instead of guessing further. Revert to
+    // `dex ? null : ...` if a live order proves this wrong.
     const fresh = await fetchClearinghouseState(address, dex ?? undefined);
     if (!fresh.ok) {
       return { status: "rejected", reason: "invalid-request", message: "Couldn't verify account balance" };
     }
     let withdrawable = toNumber(fresh.data.withdrawable);
-    const override = dex ? null : await getUnifiedAccountOverride(address);
+    const override = await getUnifiedAccountOverride(address);
     if (override) withdrawable = override.withdrawableBalance;
     if (!Number.isNaN(withdrawable) && notional > withdrawable * asset.maxLeverage) {
       return {
