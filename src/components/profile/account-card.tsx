@@ -7,15 +7,36 @@ import { Card } from "@/components/ui/card";
 import { IconCircle } from "@/components/ui/icon-circle";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 
-export function AccountCard() {
+export function AccountCard({
+  variant = "auto",
+}: {
+  /** "auto" (default) always shows the right card for the current auth
+   * state — used wherever this hasn't been split. The sign-out action
+   * moved onto the Settings page (real feedback: it belongs there, not
+   * the main Profile page), while a signed-OUT visitor still needs the
+   * sign-in prompt to stay exactly where it already was — one shared
+   * component, gated by where it's used, rather than duplicating the
+   * guest-prompt markup in two places. "accountOnly" renders nothing
+   * for a signed-out visitor (Settings); "guestOnly" renders nothing
+   * for a signed-in one (the main Profile page). */
+  variant?: "auto" | "accountOnly" | "guestOnly";
+}) {
   const { data: session, status } = useSession();
   const { t } = useTranslation();
+  const isAuthenticated = status === "authenticated" && !!session?.user;
+
+  if (variant === "accountOnly" && !isAuthenticated) return null;
+  if (variant === "guestOnly" && isAuthenticated) return null;
 
   // Guest mode (Milestone 12, Section 7): browsing/learning works without
   // an account, but there needs to be a discoverable way back to /signin
   // for anyone who wants their progress to persist — this is the only
   // entry point into the auth flow now that proxy.ts no longer forces a
   // redirect on every route.
+  //
+  // Checked directly (not via the `isAuthenticated` bool above) so
+  // TypeScript can narrow session.user to defined in the branch below —
+  // a boolean intermediate doesn't carry that narrowing through.
   if (status !== "authenticated" || !session?.user) {
     return (
       <Card>
