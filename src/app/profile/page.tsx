@@ -7,7 +7,6 @@ import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { RiskProfile } from "@/components/profile/risk-profile";
-import { WalletCard } from "@/components/profile/wallet-card";
 import { LearningProgressCard } from "@/components/learning/learning-progress";
 import { AccountCard } from "@/components/profile/account-card";
 import { useProgress } from "@/lib/progress-store";
@@ -47,8 +46,6 @@ export default function ProfilePage() {
         <RiskProfile />
 
         <LearningProgressCard progress={learningProgress} variant="compact" />
-
-        <WalletCard />
 
         <Card>
           <div className="flex items-center justify-between">

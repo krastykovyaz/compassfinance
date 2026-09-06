@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { AccountCard } from "@/components/profile/account-card";
+import { WalletCard } from "@/components/profile/wallet-card";
 import { LinkRow } from "@/components/profile/link-row";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { LOCALE_LABELS } from "@/lib/i18n/dictionaries";
@@ -56,6 +57,7 @@ export default function ProfileSettingsPage() {
       <Header title={t("general.settings")} backHref="/profile" />
       <div className="space-y-5 px-5">
         <AccountCard variant="accountOnly" />
+        <WalletCard />
 
         <Card className="divide-y divide-border p-0 px-4">
           <LinkRow
