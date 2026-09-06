@@ -7,6 +7,7 @@ import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { AccountCard } from "@/components/profile/account-card";
 import { WalletCard } from "@/components/profile/wallet-card";
+import { Trading212Card } from "@/components/profile/trading212-card";
 import { LinkRow } from "@/components/profile/link-row";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { LOCALE_LABELS } from "@/lib/i18n/dictionaries";
@@ -58,6 +59,7 @@ export default function ProfileSettingsPage() {
       <div className="space-y-5 px-5">
         <AccountCard variant="accountOnly" />
         <WalletCard />
+        <Trading212Card />
 
         <Card className="divide-y divide-border p-0 px-4">
           <LinkRow

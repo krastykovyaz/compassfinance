@@ -34,8 +34,8 @@ model User {
   updatedAt DateTime @updatedAt
 
   // --- Compass profile (Section 9) -----------------------------------------
-  locale                String?   // "en" | "fr" | "ru" — validated in service layer
-  riskProfileId         String?   // one of the canonical risk-profile ids — validated, never arbitrary
+  locale                String? // "en" | "fr" | "ru" — validated in service layer
+  riskProfileId         String? // one of the canonical risk-profile ids — validated, never arbitrary
   onboardingCompletedAt DateTime?
 
   // --- Referrals (Milestone 24) ---------------------------------------------
@@ -50,23 +50,24 @@ model User {
   referredBy       User?   @relation("Referrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
   referrals        User[]  @relation("Referrals")
 
-  accounts Account[]
-  sessions Session[]
-  wallets  WalletIdentity[]
+  accounts             Account[]
+  sessions             Session[]
+  wallets              WalletIdentity[]
+  brokerageConnections BrokerageConnection[]
 
-  interests          UserInterest[]
-  learningProgress   UserLearningProgress[]
-  quizResults        UserQuizResult[]
-  xpEvents           UserXPEvent[]
-  achievements       UserAchievement[]
-  assetUnlocks       UserAssetUnlock[]
-  favorites          UserFavoriteAsset[]
-  notificationPrefs  UserNotificationPreference[]
-  notifications      Notification[]
-  pushSubscriptions  PushSubscription[]
-  stats              UserLearningStats?
-  paperAccount       PaperAccount?
-  achievementShares  AchievementShare[]
+  interests         UserInterest[]
+  learningProgress  UserLearningProgress[]
+  quizResults       UserQuizResult[]
+  xpEvents          UserXPEvent[]
+  achievements      UserAchievement[]
+  assetUnlocks      UserAssetUnlock[]
+  favorites         UserFavoriteAsset[]
+  notificationPrefs UserNotificationPreference[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  stats             UserLearningStats?
+  paperAccount      PaperAccount?
+  achievementShares AchievementShare[]
 
   @@map("users")
 }
@@ -133,7 +134,7 @@ model PaperAccount {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   positions PaperPosition[]
   trades    PaperTrade[]
   snapshots PaperAccountSnapshot[]
@@ -167,7 +168,7 @@ model PaperAccountSnapshot {
 model PaperPosition {
   id                String   @id @default(cuid())
   accountId         String
-  assetId           String   // canonical asset id, e.g. "sp500", "btc" — see src/lib/assets/catalog.ts
+  assetId           String // canonical asset id, e.g. "sp500", "btc" — see src/lib/assets/catalog.ts
   quantity          Float
   averageEntryPrice Float
   updatedAt         DateTime @updatedAt
@@ -183,7 +184,7 @@ model PaperTrade {
   id             String   @id @default(cuid())
   accountId      String
   assetId        String
-  side           String   // "BUY" | "SELL" — validated in the trading service, never trusted raw from a client
+  side           String // "BUY" | "SELL" — validated in the trading service, never trusted raw from a client
   quantity       Float
   executionPrice Float
   // Only ever set on a SELL (realized gain/loss for that specific sell).
@@ -245,13 +246,66 @@ model WalletIdentity {
 }
 
 // ---------------------------------------------------------------------------
+// Brokerage connections (Trading 212, Phase 1) — read-only account linking
+// only; no trade/position/history sync yet (see server/trading212/).
+//
+// `provider` is a plain string, not an enum, so a future IBKR/Robinhood
+// integration is a new provider adapter (see BrokerageProvider in
+// server/trading212/) plus a row here, never a schema migration to add an
+// enum value. Every credential field is encrypted at rest (see
+// server/security/encryption.ts) — this table is never queried for its
+// plaintext value outside a single, narrow decrypt-immediately-before-use
+// call in the provider layer, and the API layer never returns these
+// columns to the client under any circumstance.
+// ---------------------------------------------------------------------------
+
+enum BrokerageConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+model BrokerageConnection {
+  id       String @id @default(cuid())
+  userId   String
+  // "trading212" for Phase 1 — see the header comment above.
+  provider String
+
+  // AES-256-GCM ciphertext (iv/authTag/data all bundled into one string —
+  // see encryption.ts's own format), never the plaintext key/secret.
+  encryptedApiKey    String
+  encryptedApiSecret String
+
+  // The account id Trading 212's own /equity/account/info returned at
+  // connect time — confirms which real account these credentials belong
+  // to, and lets a future re-validation detect if the credentials were
+  // silently swapped for a different account without disconnecting first.
+  externalAccountId String
+
+  status          BrokerageConnectionStatus @default(DISCONNECTED)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  lastConnectedAt DateTime?
+  lastSyncAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One active connection per user per provider for Phase 1 (no
+  // multi-account linking yet) — re-connecting upserts this same row
+  // rather than creating a duplicate.
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("brokerage_connections")
+}
+
+// ---------------------------------------------------------------------------
 // Interests / followed themes (Section 10)
 // ---------------------------------------------------------------------------
 
 model UserInterest {
   id        String   @id @default(cuid())
   userId    String
-  key       String   // canonical interest id — see src/lib/interests/interests.ts
+  key       String // canonical interest id — see src/lib/interests/interests.ts
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -271,14 +325,14 @@ enum LessonCompletionState {
 }
 
 model UserLearningProgress {
-  id              String                 @id @default(cuid())
+  id              String                @id @default(cuid())
   userId          String
-  assetId         String                 // canonical asset/course id, e.g. "sp500", "aapl"
-  stepIndex       Int                    @default(0)
-  completionState LessonCompletionState  @default(IN_PROGRESS)
-  startedAt       DateTime               @default(now())
+  assetId         String // canonical asset/course id, e.g. "sp500", "aapl"
+  stepIndex       Int                   @default(0)
+  completionState LessonCompletionState @default(IN_PROGRESS)
+  startedAt       DateTime              @default(now())
   completedAt     DateTime?
-  lastActivityAt  DateTime               @default(now())
+  lastActivityAt  DateTime              @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -294,12 +348,12 @@ model UserLearningProgress {
 model UserQuizResult {
   id                 String   @id @default(cuid())
   userId             String
-  assetId            String   // canonical asset/course id
-  attemptId          String   // client-generated idempotency key for one submission
+  assetId            String // canonical asset/course id
+  attemptId          String // client-generated idempotency key for one submission
   score              Int
   totalQuestions     Int
   passed             Boolean
-  conceptPerformance String?  // JSON-encoded per-concept breakdown, optional
+  conceptPerformance String? // JSON-encoded per-concept breakdown, optional
   completedAt        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -316,8 +370,8 @@ model UserQuizResult {
 model UserXPEvent {
   id        String   @id @default(cuid())
   userId    String
-  eventType String   // "lesson_completed" | "quiz_completed" | "correct_answer" | "first_investment" | "achievement_unlocked" | "asset_path_completed"
-  sourceId  String   // e.g. assetId, `${assetId}:${questionId}`, achievementId
+  eventType String // "lesson_completed" | "quiz_completed" | "correct_answer" | "first_investment" | "achievement_unlocked" | "asset_path_completed"
+  sourceId  String // e.g. assetId, `${assetId}:${questionId}`, achievementId
   amount    Int
   createdAt DateTime @default(now())
 
@@ -338,7 +392,7 @@ model UserXPEvent {
 model UserAchievement {
   id            String   @id @default(cuid())
   userId        String
-  achievementId String   // matches AchievementId in learning/types.ts
+  achievementId String // matches AchievementId in learning/types.ts
   unlockedAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -389,7 +443,7 @@ model UserFavoriteAsset {
 model UserNotificationPreference {
   id        String   @id @default(cuid())
   userId    String
-  category  String   // canonical category id: "news" | "priceAlerts" | "learning" | "achievements"
+  category  String // canonical category id: "news" | "priceAlerts" | "learning" | "achievements"
   enabled   Boolean  @default(true)
   updatedAt DateTime @updatedAt
 
@@ -412,9 +466,9 @@ model UserNotificationPreference {
 // ---------------------------------------------------------------------------
 
 model Notification {
-  id     String @id @default(cuid())
-  userId String
-  type   String // NotificationEventType — see src/server/validation.ts
+  id            String    @id @default(cuid())
+  userId        String
+  type          String // NotificationEventType — see src/server/validation.ts
   // Dedup key: what makes "the same event processed twice" collapse into
   // one row instead of two. Meaning depends on type — see
   // notification-events.ts for the exact per-type value used:
