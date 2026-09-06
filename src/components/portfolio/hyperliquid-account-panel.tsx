@@ -13,7 +13,12 @@ import { FundXyzModal } from "@/components/hyperliquid/fund-xyz-modal";
 import { closePosition, closingOrderParamsForPosition } from "@/lib/hyperliquid/hyperliquid-order-signer";
 import { getConfiguredHip3DexNames, getHip3DexName, getHip3DexFullName } from "@/lib/hyperliquid/asset-mapping";
 import type { DexTransferDirection } from "@/lib/hyperliquid/hyperliquid-dex-transfer";
-import type { HyperliquidPosition, HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
+import type {
+  HyperliquidPosition,
+  HyperliquidMarketsFetchResult,
+  HyperliquidOrderBookFetchResult,
+} from "@/lib/hyperliquid/hyperliquid-types";
+import type { AbstractWallet } from "@nktkas/hyperliquid/signing";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -66,9 +71,9 @@ export function resolveHyperliquidPanelView(params: {
 export function HyperliquidAccountPanel() {
   const { t } = useTranslation();
   const { status: sessionStatus } = useSession();
-  const { status: walletStatus, address, isConnecting, isUnsupportedChain } = useWallet();
+  const { status: walletStatus, address, chainId: walletChainId, isConnecting, isUnsupportedChain, getSigningProvider } = useWallet();
   const { snapshot, openOrders, fills, status: accountStatus, errorMessage, refresh } = useHyperliquidAccount();
-  const { agentStatus, agentWallet } = useHyperliquidAgent();
+  const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   // Phase 8 — the one (today) configured HIP-3 dex, if any. Never
   // combined with the main account above: a completely separate fetch
   // against that dex's own isolated margin pool (see asset-mapping.ts's
@@ -89,8 +94,14 @@ export function HyperliquidAccountPanel() {
   // amount IS user-editable, but clamped here to the position's own full
   // size no matter what the input holds — 100%/Max = a full close, less
   // than that = a partial reduce, same single action either way.
-  async function handleConfirmClose() {
-    if (!closingPosition || !address || !agentWallet) return;
+  // `overrideWallet` lets handleSubmitClose (below) pass the just-created
+  // signer straight through when it had to approve first — the hook's
+  // own `agentWallet` won't reflect that new signer until the next
+  // render, so relying on it here would silently no-op the very submit
+  // the user just triggered.
+  async function handleConfirmClose(overrideWallet?: AbstractWallet) {
+    const wallet = overrideWallet ?? agentWallet;
+    if (!closingPosition || !address || !wallet) return;
 
     const fullSize = Math.abs(closingPosition.size);
     const requestedSize = Number(closeSizeInput) || 0;
@@ -124,8 +135,30 @@ export function HyperliquidAccountPanel() {
     }
 
     const { side } = closingOrderParamsForPosition(closingPosition.size);
+
+    // Same testnet-only dynamic-slippage input as the trading page's open
+    // flow — see computeTestnetDynamicSlippage's comment. `side` here is
+    // already the actual ORDER side being submitted (the derived
+    // opposite of the position), so the same long→ask / short→bid
+    // selection applies unchanged.
+    let bestOpposingPrice: number | null = null;
+    if (isTestnet) {
+      try {
+        const bookRes = await fetch(`/api/hyperliquid/orderbook?coin=${closingPosition.coin}`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        const bookJson = (await bookRes.json()) as { result: HyperliquidOrderBookFetchResult };
+        if (bookJson.result.status === "ok") {
+          const level = side === "long" ? bookJson.result.book.asks[0] : bookJson.result.book.bids[0];
+          bestOpposingPrice = level?.price ?? null;
+        }
+      } catch {
+        // bestOpposingPrice stays null — falls back to the flat testnet tolerance
+      }
+    }
+
     const result = await closePosition({
-      wallet: agentWallet,
+      wallet,
       address,
       assetIndex: freshMarket.assetIndex,
       szDecimals: freshMarket.szDecimals,
@@ -133,6 +166,7 @@ export function HyperliquidAccountPanel() {
       sizeUnits,
       markPrice: freshMarket.price,
       isTestnet,
+      bestOpposingPrice,
     });
 
     setCloseExecutionState({ stage: "done", result, requestedSize: sizeUnits, szDecimals: freshMarket.szDecimals });
@@ -145,6 +179,48 @@ export function HyperliquidAccountPanel() {
         refresh();
       }
     }
+  }
+
+  // Lets a user approve real trading directly from the Manage Position
+  // modal instead of having to navigate to a trading page first — agent
+  // approval is deliberately in-memory only (see
+  // hyperliquid-agent-provider.tsx), so it's gone after any reload even
+  // with the wallet still connected, and previously this was the only
+  // place in the app that couldn't recover from that itself. Returns the
+  // freshly-created signer (or null on failure/rejection) so
+  // handleSubmitClose can chain straight into closing, one tap.
+  async function handleApproveAgentFromPortfolio() {
+    const provider = getSigningProvider();
+    if (!provider || !address) return null;
+
+    let isTestnet = false;
+    try {
+      const res = await fetch("/api/hyperliquid/markets", { signal: AbortSignal.timeout(10_000) });
+      const json = (await res.json()) as { isTestnet?: boolean };
+      isTestnet = Boolean(json.isTestnet);
+    } catch {
+      // isTestnet stays false — approveAgent() still runs, just against
+      // mainnet's hyperliquidChain classification if this fetch failed.
+    }
+
+    return approveAgent({ provider, address, isTestnet, walletChainId });
+  }
+
+  // The single action Manage Position's one Confirm & Sign button
+  // triggers — approves first if needed (one real wallet signature),
+  // then immediately closes with the freshly-approved signer, or just
+  // closes directly if already approved. A rejected/failed approval
+  // stops here — closeExecutionState never moves, so the user sees
+  // agentError (already rendered in the modal) rather than a silent
+  // no-op.
+  async function handleSubmitClose() {
+    if (agentStatus === "approved" && agentWallet) {
+      await handleConfirmClose();
+      return;
+    }
+    const signer = await handleApproveAgentFromPortfolio();
+    if (!signer) return;
+    await handleConfirmClose(signer);
   }
 
   function handleCloseModalDismiss() {
@@ -349,8 +425,8 @@ export function HyperliquidAccountPanel() {
         {fills.length === 0 ? (
           <p className="mt-1 text-[12px] text-dark-ink-muted">{t("hyperliquidAccount.noRecentFills")}</p>
         ) : (
-          <div className="mt-1.5 space-y-1.5">
-            {fills.slice(0, 5).map((f, i) => (
+          <div className="mt-1.5 max-h-[72px] space-y-1.5 overflow-y-auto">
+            {fills.slice(0, 10).map((f, i) => (
               <div key={`${f.coin}-${f.timestamp}-${i}`} className="flex items-center justify-between text-[12px] text-dark-ink-muted">
                 <span>
                   {f.side} {f.coin}
@@ -456,6 +532,7 @@ export function HyperliquidAccountPanel() {
         dexFullName={xyzDexFullName}
         mainBalance={snapshot.withdrawableBalance}
         xyzBalance={xyzAccount.snapshot?.withdrawableBalance ?? 0}
+        isUnifiedAccount={snapshot.isUnifiedAccount}
         onClose={() => setFundModalDirection(null)}
         onSuccess={() => {
           refresh();
@@ -469,8 +546,10 @@ export function HyperliquidAccountPanel() {
         sizeInput={closeSizeInput}
         onSizeInputChange={setCloseSizeInput}
         agentReady={agentStatus === "approved"}
+        agentApproving={agentStatus === "approving"}
+        agentError={agentStatus === "error" ? agentError : null}
         executionState={closeExecutionState}
-        onConfirm={() => void handleConfirmClose()}
+        onSubmit={() => void handleSubmitClose()}
         onClose={handleCloseModalDismiss}
       />
     ) : null}

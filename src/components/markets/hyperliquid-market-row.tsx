@@ -94,25 +94,29 @@ export function HyperliquidMarketRow({ market }: { market: HyperliquidMarketSnap
       </button>
       <OrderBookLevels coin={market.assetId} expanded={expanded} />
       {expanded ? (
-        <AssetDetailsPanel
-          name={market.displayName}
-          underlying={getAsset(market.compassAssetId)?.name ?? market.displayName}
-          technicalTicker={market.venue === "native" ? `${market.assetId}-PERP` : market.assetId}
-          instrumentType={t("market.instrumentTypePerpetual")}
-          venue={market.venue}
-          dexFullName={market.dexFullName}
-        />
+        <>
+          <AssetDetailsPanel
+            name={market.displayName}
+            underlying={getAsset(market.compassAssetId)?.name ?? market.displayName}
+            technicalTicker={market.venue === "native" ? `${market.assetId}-PERP` : market.assetId}
+            instrumentType={t("market.instrumentTypePerpetual")}
+            venue={market.venue}
+            dexFullName={market.dexFullName}
+          />
+          {/* Server only ever returns markets that resolved to an
+              approved CompassFinance asset (see getAssetIdForHyperliquidCoin
+              in service.ts) — every market reaching this row is tradeable
+              by construction, so this link is unconditional once
+              expanded. Only shown alongside the order book/Details, not
+              on every collapsed row in the list. */}
+          <Link
+            href={`/hyperliquid/${market.compassAssetId}`}
+            className="mt-1.5 block rounded-xl bg-surface-2 px-3 py-2 text-center text-[13px] font-medium text-ink active:opacity-80"
+          >
+            {t("market.trade")}
+          </Link>
+        </>
       ) : null}
-      {/* Server only ever returns markets that resolved to an approved
-          CompassFinance asset (see getAssetIdForHyperliquidCoin in
-          service.ts) — every market reaching this row is tradeable by
-          construction, so this link is unconditional. */}
-      <Link
-        href={`/hyperliquid/${market.compassAssetId}`}
-        className="mt-1.5 block rounded-xl bg-surface-2 px-3 py-2 text-center text-[13px] font-medium text-ink active:opacity-80"
-      >
-        {t("market.trade")}
-      </Link>
     </div>
   );
 }

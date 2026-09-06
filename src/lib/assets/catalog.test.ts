@@ -54,4 +54,20 @@ describe("asset catalog", () => {
     expect(getAsset("btc")?.category).toBe("crypto");
     expect(getAsset("eth")?.category).toBe("crypto");
   });
+
+  it("gives every index asset a real, tradable tracking ETF — you can't literally buy an index itself, the way you can buy SPY/QQQ", () => {
+    expect(getAsset("sp500")?.trackingEtfSymbol).toBe("SPY");
+    expect(getAsset("nasdaq")?.trackingEtfSymbol).toBe("QQQ");
+    for (const asset of ALL_ASSETS.filter((a) => a.category === "index")) {
+      expect(asset.trackingEtfSymbol).toBeTruthy();
+      expect(asset.trackingEtfName).toBeTruthy();
+    }
+  });
+
+  it("never sets a tracking ETF for a non-index asset", () => {
+    for (const asset of ALL_ASSETS.filter((a) => a.category !== "index")) {
+      expect(asset.trackingEtfSymbol).toBeUndefined();
+      expect(asset.trackingEtfName).toBeUndefined();
+    }
+  });
 });

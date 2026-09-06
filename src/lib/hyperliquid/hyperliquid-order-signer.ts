@@ -35,7 +35,82 @@ import type { HyperliquidExchangeResult, HyperliquidSignature } from "./hyperliq
 // "market" order (Hyperliquid has no true market-order type — this is
 // submitted as an IOC-flavored limit order bounded by this tolerance, its
 // own frontend's exact convention, see buildMarketOrderAction below).
+// Deliberately conservative — this is the value real (mainnet) trading
+// uses, where markets are actually liquid and a wide tolerance would mean
+// a bad fill during a real gap/flash move, not a feature.
 export const SLIPPAGE_TOLERANCE = 0.01;
+
+// Real, reproduced (2026-09-04): a correctly-signed, correctly-margined
+// xyz:AAPL testnet order was rejected by Hyperliquid itself — "Order
+// could not immediately match against any resting orders" — because
+// testnet's thin order book (bid $300 / ask $340 against a ~$321 mark)
+// needed ~6% of headroom to cross, far past SLIPPAGE_TOLERANCE's 1%.
+// That's the slippage guard doing exactly its job; loosening it globally
+// would make mainnet orders willing to chase a real gap, which is the
+// wrong tradeoff there. This wider tolerance is TESTNET-ONLY (never
+// touches SLIPPAGE_TOLERANCE or mainnet behavior) — testnet liquidity is
+// expected to be this thin, and the whole point of testnet is completing
+// a real fund → trade → close cycle before ever touching mainnet funds.
+//
+// First tried 0.1 (10%) — Hyperliquid rejected that too, with a DIFFERENT
+// message ("Price too far from oracle"): a separate protection, capping
+// how far a marketable order's own limit price may stray from the
+// oracle, independent of the order-book-matching check above. Live oracle
+// vs. mark for xyz:AAPL were identical ($320.83, 0% deviation) — the
+// rejection was purely about our own limit price being too aggressive,
+// not a real oracle/mark mismatch. 0.07 sits between the two confirmed
+// bounds: above the ~6% needed to cross this specific thin book, below
+// the 10% that tripped the oracle-deviation cap. Still empirical — the
+// real cap's exact value isn't documented anywhere in the SDK, so this
+// may need one more adjustment if a different asset's book requires it.
+export const TESTNET_SLIPPAGE_TOLERANCE = 0.07;
+
+// Real, reproduced (2026-09-04, continued): even 0.07 still failed the
+// oracle-deviation check for xyz:AAPL specifically — its book needed
+// ~5.87% to cross (ask $340 vs. oracle $321.15), meaning the true cap is
+// somewhere below 7%, tighter than assumed. A single fixed testnet
+// percentage can't be right for every asset at once: NVDA/AMZN's books
+// were already crossable with well under 1% of slippage, while AAPL/TSLA/
+// GOLD needed anywhere from ~6% to ~26% depending on side, live-verified
+// against Hyperliquid's own testnet API. Guessing a bigger fixed number
+// just trades one failure mode for the other.
+//
+// The right fix is to stop guessing a percentage and instead ask "what
+// price would actually cross the CURRENT book" directly, then request
+// only the smallest amount over that — minimizing how far the resulting
+// limit price sits from the oracle, which is exactly what that cap is
+// measuring. TESTNET_SLIPPAGE_TOLERANCE remains the floor (never tighter
+// than it, even for an already-crossable book) and this caps at 0.08 (a
+// value already confirmed to trip the oracle check at 0.10, so kept
+// safely under that) — if the book's own gap exceeds even that, this
+// returns the cap anyway and lets Hyperliquid's own rejection be the
+// authoritative, final answer for whether that specific resting price is
+// tradeable at all right now, not another guess from this app.
+const MAX_TESTNET_SLIPPAGE = 0.08;
+const TESTNET_SLIPPAGE_BUFFER = 0.002;
+
+export function computeTestnetDynamicSlippage(
+  markPrice: number,
+  side: PerpSide,
+  bestOpposingPrice: number | null
+): number {
+  if (bestOpposingPrice === null || !Number.isFinite(bestOpposingPrice) || markPrice <= 0) {
+    return TESTNET_SLIPPAGE_TOLERANCE;
+  }
+  const neededRatio =
+    side === "long"
+      ? (bestOpposingPrice - markPrice) / markPrice
+      : (markPrice - bestOpposingPrice) / markPrice;
+  // Floors at SLIPPAGE_TOLERANCE (mainnet's own conservative 1%), NOT
+  // TESTNET_SLIPPAGE_TOLERANCE — flooring at the wider flat value would
+  // silently force EVERY book back up to 7%+ regardless of how tight it
+  // actually is, defeating the entire point for exactly the case this
+  // exists to fix (AAPL only needs ~6%, well under the old flat 7%).
+  // TESTNET_SLIPPAGE_TOLERANCE is used only as the total-fallback above,
+  // when there's no book data to compute from at all.
+  const needed = Math.max(neededRatio + TESTNET_SLIPPAGE_BUFFER, SLIPPAGE_TOLERANCE);
+  return Math.min(needed, MAX_TESTNET_SLIPPAGE);
+}
 
 // ---------------------------------------------------------------------------
 // Pure builders — no wallet, no fetch. Directly testable.
@@ -235,6 +310,13 @@ export async function signAndSubmitPerpOrder(params: {
   leverage: number;
   markPrice: number;
   isTestnet: boolean;
+  /** Best ASK for a long, best BID for a short — the live order book's
+   * own opposing price, used ONLY on testnet to compute the smallest
+   * slippage that could actually cross it (see
+   * computeTestnetDynamicSlippage). Omit/null to fall back to the flat
+   * TESTNET_SLIPPAGE_TOLERANCE, same as before this existed. Never
+   * affects mainnet, which always uses the fixed SLIPPAGE_TOLERANCE. */
+  bestOpposingPrice?: number | null;
   onStageChange?: (stage: PerpOrderExecutionStage) => void;
 }): Promise<PerpOrderExecutionResult> {
   const { wallet } = params;
@@ -276,6 +358,9 @@ export async function signAndSubmitPerpOrder(params: {
     markPrice: params.markPrice,
     sizeUnits,
     szDecimals: params.szDecimals,
+    slippage: params.isTestnet
+      ? computeTestnetDynamicSlippage(params.markPrice, params.side, params.bestOpposingPrice ?? null)
+      : SLIPPAGE_TOLERANCE,
   });
   const orderNonce = nextNonce(leverageNonce);
 
@@ -317,6 +402,10 @@ export async function closePosition(params: {
   sizeUnits: number;
   markPrice: number;
   isTestnet: boolean;
+  /** Best BID for closing a long, best ASK for closing a short — the
+   * opposing side of the position being closed. See
+   * signAndSubmitPerpOrder's matching param for the full reasoning. */
+  bestOpposingPrice?: number | null;
 }): Promise<PerpOrderExecutionResult> {
   const action = buildMarketOrderAction({
     assetIndex: params.assetIndex,
@@ -325,6 +414,9 @@ export async function closePosition(params: {
     sizeUnits: params.sizeUnits,
     szDecimals: params.szDecimals,
     reduceOnly: true,
+    slippage: params.isTestnet
+      ? computeTestnetDynamicSlippage(params.markPrice, params.side, params.bestOpposingPrice ?? null)
+      : SLIPPAGE_TOLERANCE,
   });
   const nonce = nextNonce();
 

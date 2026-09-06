@@ -131,6 +131,14 @@ describe("getChainId — network detection", () => {
 
     expect(await getChainId(null)).toBe(1);
   });
+
+  it("also handles a plain decimal string response — eth_chainId is spec'd as hex, but a non-conformant provider returning decimal shouldn't get silently mis-parsed the way chainChanged once did", async () => {
+    const provider = mockProvider({ request: vi.fn(async () => "43114") });
+    vi.stubGlobal("window", { ethereum: provider });
+
+    expect(await getChainId()).toBe(43114);
+    expect(await getChainId()).not.toBe(274708);
+  });
 });
 
 describe("isSupportedChain", () => {
@@ -206,7 +214,7 @@ describe("subscribeAccountsChanged / subscribeChainChanged / subscribeDisconnect
     expect(cb).toHaveBeenCalledTimes(1); // not called again after unsubscribe
   });
 
-  it("fires the callback with the parsed decimal chainId on a network switch", () => {
+  it("fires the callback with the parsed decimal chainId on a network switch (hex-prefixed payload, per EIP-1193)", () => {
     const provider = mockProvider();
     vi.stubGlobal("window", { ethereum: provider });
 
@@ -215,6 +223,37 @@ describe("subscribeAccountsChanged / subscribeChainChanged / subscribeDisconnect
 
     provider._emit("chainChanged", "0x89"); // 137 = Polygon
     expect(cb).toHaveBeenCalledWith(137);
+  });
+
+  // Real, reproduced bug (2026-08-27): a WalletConnect session delivered
+  // chainChanged with the chain id as a plain decimal value (43114,
+  // Avalanche C-Chain) instead of a hex-prefixed string — blindly
+  // parsing every payload as hex silently corrupted the tracked chain id
+  // (parseInt("43114", 16) = 274708, a nonexistent chain), which then
+  // propagated into the signatureChainId used for real Hyperliquid
+  // signing and caused a genuine "active chainId is different than the
+  // one provided" wallet rejection.
+  it("also handles a plain decimal string payload — some real providers don't hex-prefix chainChanged", () => {
+    const provider = mockProvider();
+    vi.stubGlobal("window", { ethereum: provider });
+
+    const cb = vi.fn();
+    subscribeChainChanged(cb);
+
+    provider._emit("chainChanged", "43114"); // Avalanche C-Chain, NOT hex
+    expect(cb).toHaveBeenCalledWith(43114);
+    expect(cb).not.toHaveBeenCalledWith(274708); // the exact wrong value this bug used to produce
+  });
+
+  it("also handles a plain numeric payload (not a string at all)", () => {
+    const provider = mockProvider();
+    vi.stubGlobal("window", { ethereum: provider });
+
+    const cb = vi.fn();
+    subscribeChainChanged(cb);
+
+    provider._emit("chainChanged", 43114);
+    expect(cb).toHaveBeenCalledWith(43114);
   });
 
   it("fires the disconnect callback", () => {

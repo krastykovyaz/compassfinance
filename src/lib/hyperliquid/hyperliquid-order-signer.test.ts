@@ -18,6 +18,8 @@ import {
   closingOrderParamsForPosition,
   checkPartialFill,
   SLIPPAGE_TOLERANCE,
+  TESTNET_SLIPPAGE_TOLERANCE,
+  computeTestnetDynamicSlippage,
 } from "./hyperliquid-order-signer";
 import type { Eip1193Provider } from "@/lib/wallet/wallet-types";
 
@@ -54,6 +56,42 @@ describe("computeSlippageLimitPrice", () => {
   it("accepts a custom slippage tolerance", () => {
     expect(computeSlippageLimitPrice(100, "long", 0.05)).toBeCloseTo(105, 5);
     expect(computeSlippageLimitPrice(100, "short", 0.05)).toBeCloseTo(95, 5);
+  });
+});
+
+describe("computeTestnetDynamicSlippage", () => {
+  // Real, reproduced (2026-09-04): a single fixed testnet percentage
+  // can't be right for every asset's book at once — NVDA/AMZN needed
+  // well under 1%, AAPL needed ~5.87%, and even the widened 0.07 static
+  // value still tripped Hyperliquid's oracle-deviation cap for AAPL.
+  // This computes the smallest slippage that could actually cross the
+  // CURRENT book instead of guessing a shared percentage.
+
+  it("returns just over the ratio needed to reach the best ask for a long", () => {
+    // markPrice=321.15, bestAsk=340 → needed ratio ≈ 5.87%, +0.2% buffer
+    const result = computeTestnetDynamicSlippage(321.15, "long", 340);
+    expect(result).toBeGreaterThan((340 - 321.15) / 321.15);
+    expect(result).toBeLessThan(0.07); // strictly tighter than the value already confirmed too wide
+  });
+
+  it("returns just over the ratio needed to reach the best bid for a short", () => {
+    const result = computeTestnetDynamicSlippage(321.15, "short", 300);
+    expect(result).toBeCloseTo((321.15 - 300) / 321.15 + 0.002, 5);
+  });
+
+  it("floors at SLIPPAGE_TOLERANCE (mainnet's own conservative value) when the book is already crossable with less — never inflated back up to the wider flat testnet fallback", () => {
+    // NVDA-like case: the bid is already ABOVE the mark price for a short.
+    const result = computeTestnetDynamicSlippage(231.52, "short", 233.46);
+    expect(result).toBe(SLIPPAGE_TOLERANCE);
+  });
+
+  it("caps at MAX_TESTNET_SLIPPAGE (0.08) when the book gap is huge — e.g. TSLA's real, live-observed ~10.7% gap — rather than chasing it indefinitely", () => {
+    const result = computeTestnetDynamicSlippage(352.65, "long", 390.5);
+    expect(result).toBe(0.08);
+  });
+
+  it("falls back to TESTNET_SLIPPAGE_TOLERANCE when there's no opposing price at all (empty book, or the fetch failed)", () => {
+    expect(computeTestnetDynamicSlippage(321.15, "long", null)).toBe(TESTNET_SLIPPAGE_TOLERANCE);
   });
 });
 
@@ -278,6 +316,28 @@ describe("signAndSubmitPerpOrder — orchestration", () => {
 
     expect(signL1Action.mock.calls[0][0].wallet).toBe(localAccountShapedSigner);
     expect(result).toEqual({ status: "resting", orderId: 1 });
+  });
+
+  it("uses the wider TESTNET_SLIPPAGE_TOLERANCE for the order's limit price when isTestnet — real, reproduced bug: a correctly-signed testnet order was rejected because the 1% mainnet tolerance couldn't reach a thin/wide testnet book", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "resting", orderId: 1 } })));
+
+    await signAndSubmitPerpOrder({ ...BASE_PARAMS, isTestnet: true });
+
+    const orderCall = signL1Action.mock.calls[1][0];
+    // long: markPrice * (1 + TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 1.07
+    expect(orderCall.action.orders[0].p).toBe("64200");
+  });
+
+  it("still uses the conservative SLIPPAGE_TOLERANCE for mainnet — never widened just because it was widened for testnet", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "resting", orderId: 1 } })));
+
+    await signAndSubmitPerpOrder({ ...BASE_PARAMS, isTestnet: false });
+
+    const orderCall = signL1Action.mock.calls[1][0];
+    // long: markPrice * (1 + SLIPPAGE_TOLERANCE) = 60000 * 1.01
+    expect(orderCall.action.orders[0].p).toBe("60600");
   });
 
   it("passes isTestnet through to both signL1Action calls", async () => {
@@ -518,6 +578,30 @@ describe("closePosition — orchestration", () => {
     expect(signed.action.type).toBe("order");
     expect((signed.action.orders as Record<string, unknown>[])[0].r).toBe(true);
     expect(result).toEqual({ status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 });
+  });
+
+  it("uses the wider TESTNET_SLIPPAGE_TOLERANCE for the close order's limit price when isTestnet, same as opening", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 } })));
+
+    await closePosition({ ...CLOSE_PARAMS, isTestnet: true });
+
+    const signed = signL1Action.mock.calls[0][0];
+    // short: markPrice * (1 - TESTNET_SLIPPAGE_TOLERANCE) = 60000 * 0.93,
+    // which floating-point arithmetic actually lands on 55799.999... —
+    // formatPrice truncates, not rounds, so 55799 (not 55800) is correct.
+    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("55799");
+  });
+
+  it("still uses the conservative SLIPPAGE_TOLERANCE for a mainnet close", async () => {
+    signL1Action.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "filled", orderId: 9, totalSize: 0.00126, avgPrice: 60010 } })));
+
+    await closePosition({ ...CLOSE_PARAMS, isTestnet: false });
+
+    const signed = signL1Action.mock.calls[0][0];
+    // short: markPrice * (1 - SLIPPAGE_TOLERANCE) = 60000 * 0.99
+    expect((signed.action.orders as Record<string, unknown>[])[0].p).toBe("59400");
   });
 
   it("classifies a wallet rejection distinctly, without ever calling fetch", async () => {

@@ -15,7 +15,7 @@
 // real, connected Hyperliquid account, a completely separate system by
 // design (see the Hyperliquid-integration isolation tests).
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { TrendingUp, TrendingDown, Wallet, Loader2, TriangleAlert, Lock, BookOpen, ArrowLeftRight } from "lucide-react";
@@ -44,12 +44,16 @@ import {
   type PerpSide,
 } from "@/lib/hyperliquid/perp-order-calculator";
 import { signAndSubmitPerpOrder, computeOrderSizeUnits } from "@/lib/hyperliquid/hyperliquid-order-signer";
-import type { HyperliquidMarketsFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
+import type { HyperliquidMarketsFetchResult, HyperliquidOrderBookFetchResult } from "@/lib/hyperliquid/hyperliquid-types";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatCurrency, cn } from "@/lib/utils";
 
 const LEVERAGE_PRESETS = [2, 5, 10, 20];
 const MARGIN_PRESET_FRACTIONS = [0.25, 0.5, 0.75, 1];
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
 function validationMessageKey(error: PerpOrderValidationError): string {
   switch (error) {
@@ -76,7 +80,23 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const { snapshot, status: accountStatus, errorMessage, refresh: refreshAccount } = useHyperliquidAccount();
   const { agentStatus, agentWallet, errorMessage: agentError, approve: approveAgent } = useHyperliquidAgent();
   const { markets } = useHyperliquidMarkets();
-  const { learningProgress, getBlockingInvestmentStage } = useProgress();
+  const { learningProgress, getBlockingInvestmentStage, resetProgress } = useProgress();
+
+  // Real, reported bug: a user who completes a practice trade on the
+  // asset page, then navigates here via client-side routing (no full
+  // page reload), still saw this page's real-trading gate as locked —
+  // ProgressProvider fetches learningProgress (specifically
+  // practiceTradedAssetIds, real-trading-access.ts's third requirement)
+  // exactly once per mount/session, with nothing anywhere in the app
+  // telling it to refetch after a practice trade completes. Despite the
+  // name, resetProgress() is a non-destructive DB refetch for a signed-in
+  // user (see its own comment in progress-store.tsx) — this page always
+  // requires sign-in to be reached at all, so the genuinely destructive,
+  // anonymous-only branch of that same function is never in play here.
+  useEffect(() => {
+    resetProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [side, setSide] = useState<PerpSide>("long");
   const [marginInput, setMarginInput] = useState("");
@@ -104,7 +124,18 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
   const xyzAccount = useHyperliquidDexAccount(dex);
 
   const mainBalance = snapshot?.withdrawableBalance ?? 0;
-  const availableBalance = dex ? (xyzAccount.snapshot?.withdrawableBalance ?? 0) : mainBalance;
+  // EXPERIMENTAL (2026-09-04, unverified): Hyperliquid's own testnet UI
+  // showed a Unified Account Mode wallet's full main balance as directly
+  // usable on a HIP-3 dex's page with no prior transfer — see
+  // service.ts's matching order-pre-flight comment for the full context.
+  // Falls back to the isolated xyz pool's own balance for a classic
+  // account, unchanged. Revert to always using the isolated balance if a
+  // live order proves this wrong.
+  const availableBalance = dex
+    ? snapshot?.isUnifiedAccount
+      ? mainBalance
+      : (xyzAccount.snapshot?.withdrawableBalance ?? 0)
+    : mainBalance;
   const maxLeverage = market?.maxLeverage ?? 1;
   const marginUsdc = Number(marginInput) || 0;
 
@@ -183,6 +214,28 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
     // against what was really requested for partial-fill detection.
     const requestedSize = computeOrderSizeUnits(marginUsdc, leverage, freshMarket.price);
 
+    // Fresh order book right alongside freshMarket above — testnet-only
+    // input to computeTestnetDynamicSlippage (see its own comment): the
+    // smallest slippage that could actually cross the CURRENT book,
+    // instead of guessing a fixed percentage that's either too tight to
+    // fill or wide enough to trip Hyperliquid's oracle-deviation cap.
+    // long crosses the best ASK; short crosses the best BID. A failed/
+    // empty fetch just leaves this null, falling back to the existing
+    // flat TESTNET_SLIPPAGE_TOLERANCE exactly as before this existed.
+    let bestOpposingPrice: number | null = null;
+    if (isTestnet) {
+      try {
+        const bookRes = await fetch(`/api/hyperliquid/orderbook?coin=${coin}`, { signal: AbortSignal.timeout(10_000) });
+        const bookJson = (await bookRes.json()) as { result: HyperliquidOrderBookFetchResult };
+        if (bookJson.result.status === "ok") {
+          const level = side === "long" ? bookJson.result.book.asks[0] : bookJson.result.book.bids[0];
+          bestOpposingPrice = level?.price ?? null;
+        }
+      } catch {
+        // bestOpposingPrice stays null — falls back to the flat testnet tolerance
+      }
+    }
+
     const result = await signAndSubmitPerpOrder({
       wallet: agentWallet,
       address,
@@ -193,6 +246,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
       leverage,
       markPrice: freshMarket.price,
       isTestnet,
+      bestOpposingPrice,
       onStageChange: (stage) => setExecutionState({ stage }),
     });
 
@@ -364,6 +418,11 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium text-ink">{t("perpTrade.approveAgentTitle")}</p>
                 <p className="text-xs text-ink-muted">{t("perpTrade.approveAgentSubtitle")}</p>
+                {address ? (
+                  <p className="mt-1 text-xs font-medium text-ink-faint">
+                    {t("perpTrade.approveAgentWalletLabel")}: {shortAddress(address)}
+                  </p>
+                ) : null}
               </div>
             </div>
             {agentStatus === "error" && agentError ? (
@@ -575,6 +634,7 @@ export default function HyperliquidTradePage({ params }: { params: Promise<{ coi
           dexFullName={dexFullName}
           mainBalance={mainBalance}
           xyzBalance={availableBalance}
+          isUnifiedAccount={snapshot?.isUnifiedAccount ?? false}
           onClose={() => setFundModalDirection(null)}
           onSuccess={() => {
             refreshAccount();

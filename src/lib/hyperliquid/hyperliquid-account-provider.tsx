@@ -21,6 +21,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useSession } from "next-auth/react";
@@ -64,6 +65,15 @@ export function HyperliquidAccountProvider({ children }: { children: ReactNode }
   const [fills, setFills] = useState<HyperliquidFill[]>([]);
   const [status, setStatus] = useState<HyperliquidAccountStatus>("disconnected");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Real, reported bug: every 30s background poll tick was resetting
+  // status to "loading", which the panel renders as a full skeleton —
+  // a visible "blink" on every refresh that also changed the page's
+  // height enough to make the sticky bottom nav bar visibly jump.
+  // Tracks whether a fetch has ever completed so only the very first
+  // load (nothing to show yet) gets the skeleton; later polls update
+  // state in place. Reset on disconnect so a fresh connection gets its
+  // own initial loading state again.
+  const hasFetchedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (sessionStatus !== "authenticated" || !isConnected || !address) {
@@ -72,10 +82,11 @@ export function HyperliquidAccountProvider({ children }: { children: ReactNode }
       setFills([]);
       setStatus("disconnected");
       setErrorMessage(null);
+      hasFetchedRef.current = false;
       return;
     }
 
-    setStatus("loading");
+    if (!hasFetchedRef.current) setStatus("loading");
     try {
       const res = await fetch(`/api/hyperliquid/account?address=${address}`, {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -84,6 +95,7 @@ export function HyperliquidAccountProvider({ children }: { children: ReactNode }
         throw new Error(`/api/hyperliquid/account request failed (${res.status})`);
       }
       const json = (await res.json()) as AccountApiResponse;
+      hasFetchedRef.current = true;
 
       if (json.account.status !== "ok") {
         setSnapshot(null);
@@ -103,6 +115,7 @@ export function HyperliquidAccountProvider({ children }: { children: ReactNode }
       setErrorMessage(null);
       setStatus(json.account.account.positions.length === 0 && orders.length === 0 && fillsList.length === 0 ? "empty" : "ok");
     } catch (err) {
+      hasFetchedRef.current = true;
       setSnapshot(null);
       setOpenOrders([]);
       setFills([]);
@@ -155,6 +168,9 @@ export function useHyperliquidDexAccount(dex: string | null): HyperliquidDexAcco
   const [openOrders, setOpenOrders] = useState<HyperliquidOpenOrder[]>([]);
   const [status, setStatus] = useState<HyperliquidAccountStatus>("disconnected");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Same "only skeleton the first load" fix as HyperliquidAccountProvider
+  // above — see its hasFetchedRef comment.
+  const hasFetchedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (sessionStatus !== "authenticated" || !isConnected || !address || !dex) {
@@ -162,10 +178,11 @@ export function useHyperliquidDexAccount(dex: string | null): HyperliquidDexAcco
       setOpenOrders([]);
       setStatus("disconnected");
       setErrorMessage(null);
+      hasFetchedRef.current = false;
       return;
     }
 
-    setStatus("loading");
+    if (!hasFetchedRef.current) setStatus("loading");
     try {
       const res = await fetch(`/api/hyperliquid/account?address=${address}&dex=${dex}`, {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -174,6 +191,7 @@ export function useHyperliquidDexAccount(dex: string | null): HyperliquidDexAcco
         throw new Error(`/api/hyperliquid/account request failed (${res.status})`);
       }
       const json = (await res.json()) as { account: HyperliquidAccountFetchResult; openOrders: HyperliquidOpenOrdersFetchResult };
+      hasFetchedRef.current = true;
 
       if (json.account.status !== "ok") {
         setSnapshot(null);
@@ -189,6 +207,7 @@ export function useHyperliquidDexAccount(dex: string | null): HyperliquidDexAcco
       setErrorMessage(null);
       setStatus(json.account.account.positions.length === 0 && orders.length === 0 ? "empty" : "ok");
     } catch (err) {
+      hasFetchedRef.current = true;
       setSnapshot(null);
       setOpenOrders([]);
       setStatus("error");

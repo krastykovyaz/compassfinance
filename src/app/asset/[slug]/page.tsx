@@ -92,6 +92,29 @@ export default function AssetDetailPage({
   const blockingStage = getBlockingInvestmentStage(slug);
   const learnHref = getLessonHref(slug);
   const moves = whatMovesIt[asset.category];
+  // unlocks.ts's own unlockDescription strings are hardcoded English —
+  // never localized, a real reported bug (mixed English/Russian on this
+  // page). One i18n key per assetId instead of restructuring that data
+  // file's shape.
+  const UNLOCK_DESCRIPTION_KEY: Record<string, string> = {
+    sp500: "learning.unlockDescriptionSp500",
+    nasdaq: "learning.unlockDescriptionNasdaq",
+    aapl: "learning.unlockDescriptionAapl",
+    tsla: "learning.unlockDescriptionTsla",
+    nvda: "learning.unlockDescriptionNvda",
+    msft: "learning.unlockDescriptionMsft",
+    amzn: "learning.unlockDescriptionAmzn",
+    googl: "learning.unlockDescriptionGoogl",
+    meta: "learning.unlockDescriptionMeta",
+    gold: "learning.unlockDescriptionGold",
+    "brent-oil": "learning.unlockDescriptionBrentOil",
+    btc: "learning.unlockDescriptionBtc",
+    eth: "learning.unlockDescriptionEth",
+  };
+  function unlockDescriptionFor(unlockAssetId: string): string {
+    const key = UNLOCK_DESCRIPTION_KEY[unlockAssetId];
+    return key ? t(key) : `Complete the required learning path to unlock ${unlockAssetId}.`;
+  }
   const MOVE_LABEL_KEY: Record<string, string> = {
     Earnings: "market.earnings",
     "Interest rates": "market.interestRates",
@@ -151,12 +174,11 @@ export default function AssetDetailPage({
                 <p className="mt-1 text-[13px] font-medium text-ink">
                   {t("market.completeFirst")}: {blockingStage.name}
                 </p>
-                <p className="mt-1 text-[13px] text-ink-muted">{blockingStage.unlockDescription}</p>
+                <p className="mt-1 text-[13px] text-ink-muted">{unlockDescriptionFor(blockingStage.assetId)}</p>
               </>
             ) : (
               <p className="mt-1 text-[13px] text-ink-muted">
-                {stageDef?.unlockDescription ??
-                  `Complete the required learning path to unlock ${asset.name}.`}
+                {stageDef ? unlockDescriptionFor(stageDef.assetId) : t("learning.unlockDescriptionGeneric")}
               </p>
             )}
             <Link
@@ -215,20 +237,12 @@ export default function AssetDetailPage({
           <h2 className="text-[15px] font-semibold text-ink">{t("market.about")}</h2>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
             {asset.category === "index"
-              ? `${asset.name} tracks a basket of leading U.S. companies and is widely used as a benchmark for overall market performance.`
-              : `${asset.name} (${asset.symbol}) is one of the most actively followed companies on U.S. markets. This is placeholder demo copy for the prototype.`}
+              ? `${asset.name} ${t("market.aboutIndexBody")}`
+              : `${asset.name} (${asset.symbol}) ${t("market.aboutStockBody")}`}
           </p>
         </Card>
 
-        {!unlocked ? (
-          <button
-            disabled
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-surface-2 py-3.5 text-[15px] font-medium text-ink-faint"
-          >
-            <Lock size={16} />
-            {t("market.completeLearningToUnlockInvesting")}
-          </button>
-        ) : existingPosition ? (
+        {!unlocked ? null : existingPosition ? (
           <button
             onClick={() => router.push(`/position/${slug}`)}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90"
@@ -241,14 +255,16 @@ export default function AssetDetailPage({
             disabled={livePrice == null}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink py-3.5 text-[15px] font-medium text-surface active:opacity-90 disabled:opacity-50"
           >
-            {livePrice == null ? "Market data unavailable" : `Buy ${asset.name}`}
+            {livePrice == null
+              ? t("market.marketDataUnavailableButton")
+              : `${t("market.buyLabel")} ${asset.trackingEtfSymbol ?? asset.name}`}
           </button>
         )}
       </div>
 
       {showTradeSheet && livePrice != null ? (
         <TradeSheet
-          assetName={asset.name}
+          assetName={asset.trackingEtfSymbol ?? asset.name}
           entryPrice={livePrice}
           maxAmountUsdc={account?.cashBalance ?? 0}
           onConfirm={handleConfirmBuy}

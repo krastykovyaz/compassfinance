@@ -79,6 +79,18 @@ export default function PortfolioPage() {
           )}
         </Card>
 
+        {/* Deliberately separate from "Paper portfolio value"/Holdings
+            above — real Hyperliquid trades never factor into that number
+            or list (Paper Trading and real Hyperliquid trading are
+            independent systems throughout this app). A user trading real
+            assets otherwise has no on-page cue that their real
+            balance/positions live down here instead, in
+            HyperliquidAccountPanel — see the real, reported confusion
+            this heading fixes. */}
+        <div>
+          <h2 className="px-1 text-[15px] font-semibold text-ink">{t("hyperliquidAccount.realTradingHeading")}</h2>
+          <p className="px-1 text-[12px] text-ink-muted">{t("hyperliquidAccount.realTradingSubheading")}</p>
+        </div>
         <HyperliquidAccountPanel />
       </div>
     </AppShell>

@@ -166,6 +166,35 @@ export function correctWalletConnectChainIdIfDesynced(provider: Eip1193Provider,
   }
 }
 
+/** Real, reproduced bug (2026-08-28): even the live-retry fallback below
+ * kept reporting the exact chain we already believed the wallet was on —
+ * because correctWalletConnectChainIdIfDesynced writes straight into the
+ * same SDK-internal `chainId` property that a subsequent `eth_chainId`
+ * call can just echo back, so a "live" read can't reveal a genuine
+ * mismatch once we've already forced our own guess into that property.
+ * Reading state can't out-guess a wallet whose real active network only
+ * that wallet knows — so instead of asking, this actively COMMANDS the
+ * wallet onto `targetChainId` via wallet_switchEthereumChain (EIP-3326)
+ * before a real-wallet signature (approveAgent, or a sendAsset transfer
+ * — see hyperliquid-dex-transfer.ts — the only two actions in the whole
+ * trading flow that ever touch the real wallet). Every chain offered
+ * here is one the session already approved at pairing time, so
+ * a compliant wallet either already-there no-ops instantly or switches
+ * without needing wallet_addEthereumChain first. Best-effort: swallows
+ * any failure (unsupported method, user rejection, unknown chain) and
+ * leaves chainId selection to fall through to the existing guess/retry
+ * logic exactly as if this had never been called. */
+export async function switchToChain(provider: Eip1193Provider, targetChainId: number): Promise<void> {
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: `0x${targetChainId.toString(16)}` }],
+    });
+  } catch {
+    // Best-effort — proceed with whatever the wallet already reports.
+  }
+}
+
 /** Signs (with the user's REAL wallet — this is the only step that ever
  * pops it for the agent flow) and submits the one-time approveAgent
  * action, through the existing generic /api/hyperliquid/order route —
@@ -194,35 +223,87 @@ export async function approveAgent(params: {
   // walletChainId (when available) is preferred over the guess — see
   // preferredApprovedChain.
   const wcChains = walletConnectApprovedChains(params.provider);
-  const chainId =
+  let chainId =
     params.walletChainId ??
     (wcChains ? preferredApprovedChain(wcChains) : await getChainId(params.provider));
-  const nonce = nextNonce();
+  let source = params.walletChainId != null ? "walletChainId param" : wcChains ? "WC approved-list guess" : "getChainId() live call";
 
-  const action = buildApproveAgentAction({
-    agentAddress: params.agentAddress,
-    agentName: "CompassFinance",
-    signatureChainId: `0x${chainId.toString(16)}`,
-    hyperliquidChain: params.isTestnet ? "Testnet" : "Mainnet",
-    nonce,
-  });
+  // Actively puts the wallet on `chainId` rather than just hoping the
+  // guess above matches reality — see switchToChain's own comment for
+  // why reading state stopped being trustworthy enough on its own.
+  await switchToChain(params.provider, chainId);
 
-  // Run immediately before the actual signing call — not earlier, and
-  // with nothing async in between — so nothing has a chance to
-  // re-corrupt the SDK's own internal chainId (used to scope the relayed
-  // signing request itself) between correcting it and using it.
-  correctWalletConnectChainIdIfDesynced(params.provider, params.walletChainId);
+  // Builds a fresh action (own nonce) for whatever `chainId`/`source`
+  // currently hold, signs it, and runs correctWalletConnectChainIdIfDesynced
+  // immediately before the signing call — not earlier, and with nothing
+  // async in between — so nothing has a chance to re-corrupt the SDK's own
+  // internal chainId between correcting it and using it.
+  async function attemptSign() {
+    const nonce = nextNonce();
+    const action = buildApproveAgentAction({
+      agentAddress: params.agentAddress,
+      agentName: "CompassFinance",
+      signatureChainId: `0x${chainId.toString(16)}`,
+      hyperliquidChain: params.isTestnet ? "Testnet" : "Mainnet",
+      nonce,
+    });
+    correctWalletConnectChainIdIfDesynced(params.provider, chainId);
+    const signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
+    return { action, nonce, signature };
+  }
 
-  let signature: HyperliquidSignature;
-  try {
-    signature = await signUserSignedAction({ wallet, action, types: ApproveAgentTypes });
-  } catch (err) {
-    if (isUserRejectedError(err)) return { status: "wallet-rejected" };
+  function diagnosticError(err: unknown): ApproveAgentResult {
+    // TEMPORARY diagnostic (2026-08-27): surfaces exactly which chainId
+    // was chosen, where it came from, and the session's full approved
+    // list — kept until the live retry below (added the same day, after
+    // this diagnostic first showed the walletChainId fix alone wasn't
+    // enough) is confirmed to actually resolve the reproduced failure.
+    const diagnostic = `signatureChainId=0x${chainId.toString(16)} (${chainId}), source=${source}, wcApprovedChains=${wcChains ? JSON.stringify(wcChains) : "none (not WalletConnect / no session)"}`;
     return {
       status: "rejected",
       reason: "invalid-request",
-      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)}`,
+      message: `Couldn't sign the trading approval: ${signingErrorDetail(err)} [${diagnostic}]`,
     };
+  }
+
+  let action: ReturnType<typeof buildApproveAgentAction>;
+  let nonce: number;
+  let signature: HyperliquidSignature;
+  try {
+    ({ action, nonce, signature } = await attemptSign());
+  } catch (firstErr) {
+    if (isUserRejectedError(firstErr)) return { status: "wallet-rejected" };
+
+    // Real, reproduced bug (2026-08-27): even with the walletChainId fix
+    // AND the chainChanged hex/decimal parsing fix both live, the wallet
+    // still rejected with "active chainId is different than the one
+    // provided" — meaning our tracked chainId (a real, validly-parsed
+    // value) had simply gone stale relative to the wallet's actual
+    // current network, e.g. because this session's chainChanged event
+    // never fired for a switch made outside the tab. A live getChainId()
+    // round trip was previously found to re-desync a WalletConnect
+    // session's own internal chainId, so it's normally avoided on the
+    // happy path — but that's not a reason to keep failing forever once
+    // we're already in the failure path with nothing left to lose. One
+    // retry with a genuinely fresh value (and an immediate
+    // correctWalletConnectChainIdIfDesynced call using that fresh value,
+    // undoing any corruption the round trip itself causes) self-heals
+    // exactly this staleness without another manual diagnostic round
+    // trip from the user.
+    const mismatch = signingErrorDetail(firstErr).toLowerCase().includes("active chainid is different");
+    if (!mismatch || source === "getChainId() live call") return diagnosticError(firstErr);
+
+    const freshChainId = await getChainId(params.provider);
+    if (freshChainId === chainId) return diagnosticError(firstErr);
+    chainId = freshChainId;
+    source = "getChainId() live call (retry)";
+
+    try {
+      ({ action, nonce, signature } = await attemptSign());
+    } catch (retryErr) {
+      if (isUserRejectedError(retryErr)) return { status: "wallet-rejected" };
+      return diagnosticError(retryErr);
+    }
   }
 
   const res = await fetch("/api/hyperliquid/order", {

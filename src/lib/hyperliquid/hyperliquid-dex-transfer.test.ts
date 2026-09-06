@@ -46,6 +46,7 @@ describe("buildSendAssetAction — pure builder", () => {
       signatureChainId: "0xa4b1",
       hyperliquidChain: "Mainnet",
       nonce: 1,
+      isUnifiedAccount: false,
     });
     expect(action).toEqual({
       type: "sendAsset",
@@ -61,6 +62,38 @@ describe("buildSendAssetAction — pure builder", () => {
     });
   });
 
+  it("a 'fund' transfer uses \"spot\" (not \"\") as the main-dex side for a Unified Account — real, reproduced bug: Hyperliquid rejects \"\" for these accounts with 'Unified account only supports sending assets through spot'", () => {
+    const action = buildSendAssetAction({
+      address: "0xuser",
+      direction: "fund",
+      dex: "xyz",
+      amountUsdc: "25",
+      usdcTokenId: USDC_TOKEN_ID,
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      nonce: 1,
+      isUnifiedAccount: true,
+    });
+    expect(action.sourceDex).toBe("spot");
+    expect(action.destinationDex).toBe("xyz");
+  });
+
+  it("a 'withdraw' transfer uses \"spot\" (not \"\") as the destination for a Unified Account", () => {
+    const action = buildSendAssetAction({
+      address: "0xuser",
+      direction: "withdraw",
+      dex: "xyz",
+      amountUsdc: "10",
+      usdcTokenId: USDC_TOKEN_ID,
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      nonce: 2,
+      isUnifiedAccount: true,
+    });
+    expect(action.sourceDex).toBe("xyz");
+    expect(action.destinationDex).toBe("spot");
+  });
+
   it("a 'withdraw' transfer moves from the named HIP-3 dex back to the main dex (\"\")", () => {
     const action = buildSendAssetAction({
       address: "0xuser",
@@ -71,6 +104,7 @@ describe("buildSendAssetAction — pure builder", () => {
       signatureChainId: "0xa4b1",
       hyperliquidChain: "Mainnet",
       nonce: 2,
+      isUnifiedAccount: false,
     });
     expect(action.sourceDex).toBe("xyz");
     expect(action.destinationDex).toBe("");
@@ -86,6 +120,7 @@ describe("buildSendAssetAction — pure builder", () => {
       signatureChainId: "0xa4b1",
       hyperliquidChain: "Mainnet",
       nonce: 1,
+      isUnifiedAccount: false,
     });
     expect(action.destination).toBe("0xuser");
   });
@@ -100,6 +135,7 @@ describe("buildSendAssetAction — pure builder", () => {
       signatureChainId: "0xa4b1",
       hyperliquidChain: "Mainnet",
       nonce: 1,
+      isUnifiedAccount: false,
     });
     const onSepolia = buildSendAssetAction({
       address: "0xuser",
@@ -110,6 +146,7 @@ describe("buildSendAssetAction — pure builder", () => {
       signatureChainId: "0xaa36a7",
       hyperliquidChain: "Testnet",
       nonce: 1,
+      isUnifiedAccount: false,
     });
     expect(onArbitrum.signatureChainId).toBe("0xa4b1");
     expect(onSepolia.signatureChainId).toBe("0xaa36a7");
@@ -125,6 +162,7 @@ describe("signAndSubmitDexTransfer — orchestration", () => {
     amountUsdc: "25",
     usdcTokenId: USDC_TOKEN_ID,
     isTestnet: false,
+    isUnifiedAccount: false,
   };
 
   beforeEach(() => {
@@ -141,6 +179,17 @@ describe("signAndSubmitDexTransfer — orchestration", () => {
 
     const signedAction = signUserSignedAction.mock.calls[0][0].action;
     expect(signedAction.signatureChainId).toBe("0xa4b1");
+  });
+
+  it("signs sourceDex \"spot\" for a Unified Account fund transfer, not \"\"", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    await signAndSubmitDexTransfer({ provider: mockProvider(), ...BASE_PARAMS, isUnifiedAccount: true });
+
+    const signedAction = signUserSignedAction.mock.calls[0][0].action;
+    expect(signedAction.sourceDex).toBe("spot");
+    expect(signedAction.destinationDex).toBe("xyz");
   });
 
   it("submits through the existing /api/hyperliquid/order route, not directly to Hyperliquid", async () => {
@@ -183,6 +232,48 @@ describe("signAndSubmitDexTransfer — orchestration", () => {
 
     expect(result).toEqual({ status: "wallet-rejected" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("commands the wallet onto the chosen chainId via wallet_switchEthereumChain before signing", async () => {
+    signUserSignedAction.mockResolvedValue(SIGNATURE);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+    const provider = mockProvider();
+
+    await signAndSubmitDexTransfer({ provider, ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(provider.request).toHaveBeenCalledWith({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xa86a" }],
+    });
+  });
+
+  it("self-heals a stale walletChainId: retries once with a live getChainId() value after an 'active chainId is different' rejection", async () => {
+    signUserSignedAction
+      .mockRejectedValueOnce({ code: -32602, message: "Invalid parameters: active chainId is different than the one provided." })
+      .mockResolvedValueOnce(SIGNATURE);
+    getChainId.mockResolvedValue(42161);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ result: { status: "pending" } })));
+
+    const result = await signAndSubmitDexTransfer({ provider: mockProvider(), ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(2);
+    expect(signUserSignedAction.mock.calls[0][0].action.signatureChainId).toBe("0xa86a");
+    expect(signUserSignedAction.mock.calls[1][0].action.signatureChainId).toBe("0xa4b1");
+    expect(result.status).toBe("pending");
+  });
+
+  it("does not retry when the fresh getChainId() value matches the one that just failed", async () => {
+    signUserSignedAction.mockRejectedValue({
+      code: -32602,
+      message: "Invalid parameters: active chainId is different than the one provided.",
+    });
+    getChainId.mockResolvedValue(43114);
+    vi.stubGlobal("fetch", vi.fn());
+
+    const result = await signAndSubmitDexTransfer({ provider: mockProvider(), ...BASE_PARAMS, walletChainId: 43114 });
+
+    expect(signUserSignedAction).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("rejected");
   });
 
   it("surfaces the real underlying error message on a non-rejection signing failure", async () => {

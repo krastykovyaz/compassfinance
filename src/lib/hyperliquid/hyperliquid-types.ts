@@ -108,6 +108,16 @@ export type HyperliquidAccountSnapshot = {
   totalMarginUsed: number;
   positions: HyperliquidPosition[];
   timestamp: number;
+  /** True when this address is in Hyperliquid's "Unified Account Mode"
+   * (a setting the user enables in Hyperliquid's own app) — always false
+   * for a dex-scoped (HIP-3) fetch, since the override never applies to
+   * an isolated dex's own pool. See getUnifiedAccountOverride's comment
+   * in service.ts. sendAsset's main-dex side must be "spot" instead of
+   * "" for a unified account (a real, live-confirmed Hyperliquid API
+   * rule — a plain "" transfer is rejected outright for these accounts),
+   * so client code building a transfer needs this to pick the right
+   * value instead of guessing. */
+  isUnifiedAccount: boolean;
 };
 
 export type HyperliquidOpenOrder = {

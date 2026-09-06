@@ -57,6 +57,13 @@ export type AssetCatalogEntry = {
    * actually calls Yahoo with this value.
    */
   yahooSymbol: string;
+  /** The real, tradable ETF that tracks this index — an index itself
+   * can't literally be bought (yahooSymbol above is for PRICE DATA only,
+   * deliberately never an ETF proxy — see its own note), but a retail
+   * investor buying "the S&P 500" in practice means buying SPY. Set only
+   * for category "index" assets; undefined for every other category. */
+  trackingEtfSymbol?: string;
+  trackingEtfName?: string;
 };
 
 const DISPLAY_NAME: Record<AssetId, string> = {
@@ -107,6 +114,11 @@ const YAHOO_SYMBOL: Record<AssetId, string> = {
   eth: "ETH-USD",
 };
 
+const TRACKING_ETF: Partial<Record<AssetId, { symbol: string; name: string }>> = {
+  sp500: { symbol: "SPY", name: "SPDR S&P 500 ETF Trust" },
+  nasdaq: { symbol: "QQQ", name: "Invesco QQQ Trust" },
+};
+
 const COLOR_KEY: Record<AssetId, ColorKey> = {
   sp500: "blue",
   nasdaq: "purple",
@@ -135,6 +147,8 @@ function buildCatalog(): Record<AssetId, AssetCatalogEntry> {
       category: path.category,
       colorKey: COLOR_KEY[id],
       yahooSymbol: YAHOO_SYMBOL[id],
+      trackingEtfSymbol: TRACKING_ETF[id]?.symbol,
+      trackingEtfName: TRACKING_ETF[id]?.name,
     };
   }
   return entries;
