@@ -34,8 +34,8 @@ model User {
   updatedAt DateTime @updatedAt
 
   // --- Compass profile (Section 9) -----------------------------------------
-  locale                String?   // "en" | "fr" | "ru" — validated in service layer
-  riskProfileId         String?   // one of the canonical risk-profile ids — validated, never arbitrary
+  locale                String? // "en" | "fr" | "ru" — validated in service layer
+  riskProfileId         String? // one of the canonical risk-profile ids — validated, never arbitrary
   onboardingCompletedAt DateTime?
 
   // --- Referrals (Milestone 24) ---------------------------------------------
@@ -50,23 +50,29 @@ model User {
   referredBy       User?   @relation("Referrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
   referrals        User[]  @relation("Referrals")
 
-  accounts Account[]
-  sessions Session[]
-  wallets  WalletIdentity[]
+  accounts             Account[]
+  sessions             Session[]
+  wallets              WalletIdentity[]
+  brokerageConnections BrokerageConnection[]
 
-  interests          UserInterest[]
-  learningProgress   UserLearningProgress[]
-  quizResults        UserQuizResult[]
-  xpEvents           UserXPEvent[]
-  achievements       UserAchievement[]
-  assetUnlocks       UserAssetUnlock[]
-  favorites          UserFavoriteAsset[]
-  notificationPrefs  UserNotificationPreference[]
-  notifications      Notification[]
-  pushSubscriptions  PushSubscription[]
-  stats              UserLearningStats?
-  paperAccount       PaperAccount?
-  achievementShares  AchievementShare[]
+  interests             UserInterest[]
+  learningProgress      UserLearningProgress[]
+  quizResults           UserQuizResult[]
+  xpEvents              UserXPEvent[]
+  achievements          UserAchievement[]
+  assetUnlocks          UserAssetUnlock[]
+  favorites             UserFavoriteAsset[]
+  notificationPrefs     UserNotificationPreference[]
+  notifications         Notification[]
+  pushSubscriptions     PushSubscription[]
+  stats                 UserLearningStats?
+  paperAccount          PaperAccount?
+  achievementShares     AchievementShare[]
+  brokerageAccounts     BrokerageAccount[]
+  brokeragePositions    BrokeragePosition[]
+  brokerageOrders       BrokerageOrder[]
+  brokerageTransactions BrokerageTransaction[]
+  brokerageActivities   BrokerageActivity[]
 
   @@map("users")
 }
@@ -133,7 +139,7 @@ model PaperAccount {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   positions PaperPosition[]
   trades    PaperTrade[]
   snapshots PaperAccountSnapshot[]
@@ -167,7 +173,7 @@ model PaperAccountSnapshot {
 model PaperPosition {
   id                String   @id @default(cuid())
   accountId         String
-  assetId           String   // canonical asset id, e.g. "sp500", "btc" — see src/lib/assets/catalog.ts
+  assetId           String // canonical asset id, e.g. "sp500", "btc" — see src/lib/assets/catalog.ts
   quantity          Float
   averageEntryPrice Float
   updatedAt         DateTime @updatedAt
@@ -183,7 +189,7 @@ model PaperTrade {
   id             String   @id @default(cuid())
   accountId      String
   assetId        String
-  side           String   // "BUY" | "SELL" — validated in the trading service, never trusted raw from a client
+  side           String // "BUY" | "SELL" — validated in the trading service, never trusted raw from a client
   quantity       Float
   executionPrice Float
   // Only ever set on a SELL (realized gain/loss for that specific sell).
@@ -245,13 +251,305 @@ model WalletIdentity {
 }
 
 // ---------------------------------------------------------------------------
+// Brokerage connections (Trading 212, Phase 1) — read-only account linking
+// only; no trade/position/history sync yet (see server/trading212/).
+//
+// `provider` is a plain string, not an enum, so a future IBKR/Robinhood
+// integration is a new provider adapter (see BrokerageProvider in
+// server/trading212/) plus a row here, never a schema migration to add an
+// enum value. Every credential field is encrypted at rest (see
+// server/security/encryption.ts) — this table is never queried for its
+// plaintext value outside a single, narrow decrypt-immediately-before-use
+// call in the provider layer, and the API layer never returns these
+// columns to the client under any circumstance.
+// ---------------------------------------------------------------------------
+
+enum BrokerageConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+model BrokerageConnection {
+  id       String @id @default(cuid())
+  userId   String
+  // "trading212" for Phase 1 — see the header comment above.
+  provider String
+
+  // AES-256-GCM ciphertext (iv/authTag/data all bundled into one string —
+  // see encryption.ts's own format), never the plaintext key/secret.
+  encryptedApiKey    String
+  encryptedApiSecret String
+
+  // The account id Trading 212's own /equity/account/info returned at
+  // connect time — confirms which real account these credentials belong
+  // to, and lets a future re-validation detect if the credentials were
+  // silently swapped for a different account without disconnecting first.
+  externalAccountId String
+
+  status          BrokerageConnectionStatus @default(DISCONNECTED)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  lastConnectedAt DateTime?
+
+  // Phase 2 — sync state (Requirement 10). syncStatus/syncError describe
+  // the OUTCOME of the last sync attempt, independent of `status` above
+  // (which describes the connection/credential itself) — a sync can fail
+  // (bad network, rate limit) without the connection becoming invalid.
+  // lastSyncAt is set ONLY on a fully clean success (every step ok) — its
+  // existing Phase 2/3/4 meaning of "last successful sync" is preserved
+  // exactly, so nothing already reading it needs to change.
+  lastSyncAt DateTime?
+  syncStatus BrokerageSyncStatus @default(NEVER_SYNCED)
+  syncError  String?
+
+  // Phase 5 — automatic sync. syncStartedAt is set at the start of EVERY
+  // sync attempt (manual or scheduled) and serves two purposes: (1) the
+  // atomic lock's own timestamp — see trading212-sync.ts's
+  // acquireSyncLock, which treats a SYNCING row whose syncStartedAt is
+  // older than the stale-lock threshold as recoverable rather than
+  // permanently stuck (a crashed process must not wedge a connection
+  // forever); (2) the scheduler's "was this connection attempted
+  // recently" throttle, so a connection that just failed isn't retried
+  // faster than the configured interval either. lastFailedSyncAt is set
+  // only on a failed attempt, distinct from lastSyncAt, so the UI can
+  // show "Last successful sync" and "Last failed sync" as the two
+  // genuinely different facts Requirement 6/13 ask for.
+  syncStartedAt    DateTime?
+  lastFailedSyncAt DateTime?
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      BrokerageAccount?
+  positions    BrokeragePosition[]
+  orders       BrokerageOrder[]
+  transactions BrokerageTransaction[]
+  activities   BrokerageActivity[]
+
+  // One active connection per user per provider for Phase 1 (no
+  // multi-account linking yet) — re-connecting upserts this same row
+  // rather than creating a duplicate.
+  @@unique([userId, provider])
+  @@index([userId])
+  // The scheduler's eligibility scan filters on exactly these three
+  // columns (provider + status + syncStartedAt) — see
+  // trading212-scheduler.ts's findEligibleConnections.
+  @@index([provider, status, syncStartedAt])
+  @@map("brokerage_connections")
+}
+
+enum BrokerageSyncStatus {
+  NEVER_SYNCED
+  SYNCING
+  SYNCED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — read-only portfolio/history sync (server/trading212/sync.ts).
+// Provider-neutral by design, same reasoning as BrokerageConnection: every
+// row keys off (userId, brokerageConnectionId, provider, externalId), so a
+// future IBKR/Robinhood sync reuses these exact same tables. `externalId`
+// is always Trading 212's own id/reference for that record — the ONE
+// thing that makes a re-sync idempotent (upsert on
+// [brokerageConnectionId, externalId], never insert-if-not-exists via a
+// fuzzy match).
+//
+// BrokerageAccount is a materialized CURRENT snapshot (upserted whole on
+// every sync, one row per connection) — total value/cash/invested are
+// facts about "right now", not history, so there's nothing to
+// deduplicate. BrokeragePosition is likewise current-state: closed
+// positions are removed on sync (mirrors PaperPosition's own existing
+// "delete at zero" convention above) — this is NOT covered by
+// Requirement 5's "never delete history" rule, which is specifically
+// about BrokerageOrder/BrokerageTransaction/BrokerageActivity, the three
+// genuinely historical, append-only tables below.
+// ---------------------------------------------------------------------------
+
+model BrokerageAccount {
+  id                    String @id @default(cuid())
+  userId                String
+  brokerageConnectionId String @unique
+  provider              String
+
+  currencyCode  String?
+  totalValue    Float?
+  cashAvailable Float?
+  cashInPies    Float?
+  cashReserved  Float?
+  investedValue Float?
+  realizedPnl   Float?
+  unrealizedPnl Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection BrokerageConnection @relation(fields: [brokerageConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("brokerage_accounts")
+}
+
+// One row per currently-open position — see the section header comment
+// for why this is current-state (replaced each sync), not history.
+// `externalId` is Trading 212's own ticker (e.g. "AAPL_US_EQ") since a
+// position has no separate numeric id of its own in their API.
+model BrokeragePosition {
+  id                    String @id @default(cuid())
+  userId                String
+  brokerageConnectionId String
+  provider              String
+  externalId            String // Trading 212's own ticker, e.g. "AAPL_US_EQ"
+
+  // The CompassFinance asset this instrument was confidently mapped to
+  // (see asset-mapping.ts) — null when unmapped, per Requirement 6
+  // ("preserve the external instrument information and mark it as
+  // unmapped instead of guessing"). externalName/externalTicker are
+  // always the raw Trading 212 values, kept regardless of mapping.
+  compassAssetId String?
+  externalTicker String
+  externalName   String?
+  currencyCode   String?
+
+  quantity      Float
+  averagePrice  Float?
+  currentPrice  Float?
+  unrealizedPnl Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection BrokerageConnection @relation(fields: [brokerageConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([brokerageConnectionId, externalId])
+  @@index([userId])
+  @@map("brokerage_positions")
+}
+
+// Raw historical order/fill records from Trading 212's own
+// /equity/history/orders — append-only, idempotent on
+// [brokerageConnectionId, externalId] (Trading 212's own order id).
+// Never deleted by an incremental sync, per Requirement 5.
+model BrokerageOrder {
+  id                    String @id @default(cuid())
+  userId                String
+  brokerageConnectionId String
+  provider              String
+  externalId            String // Trading 212's own order id
+
+  compassAssetId String?
+  externalTicker String
+  externalName   String?
+
+  side           String? // "BUY" | "SELL" — as reported by Trading 212, never inferred; null if absent
+  status         String? // Trading 212's own order status string, stored as-is; null if absent
+  quantity       Float?
+  filledQuantity Float?
+  // Per-unit executed price — real or mechanically derived from
+  // filledValue/filledQuantity (see trading212-client.ts). Kept distinct
+  // from filledValue below — Phase 2 conflated these under one field,
+  // fixed in Phase 4's activity-model audit.
+  fillPrice      Float?
+  // The real, aggregate executed value Trading 212 itself reported for
+  // this fill — never derived, never equal to fillPrice unless
+  // filledQuantity happens to be 1.
+  filledValue    Float?
+  currencyCode   String?
+
+  // The order's own creation time, as Trading 212 reported it — never
+  // CompassFinance's own sync/import time (Requirement 4: "preserve the
+  // original Trading 212 timestamps").
+  externalCreatedAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection BrokerageConnection @relation(fields: [brokerageConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([brokerageConnectionId, externalId])
+  @@index([userId])
+  @@index([brokerageConnectionId, externalCreatedAt])
+  @@map("brokerage_orders")
+}
+
+// Raw cash-movement records from Trading 212's own /history/transactions
+// (DEPOSIT/WITHDRAW/FEE/TRANSFER) — append-only, idempotent on
+// [brokerageConnectionId, externalId] (Trading 212's own reference).
+model BrokerageTransaction {
+  id                    String @id @default(cuid())
+  userId                String
+  brokerageConnectionId String
+  provider              String
+  externalId            String // Trading 212's own transaction reference
+
+  type         String // "DEPOSIT" | "WITHDRAW" | "FEE" | "TRANSFER" — as reported, never inferred
+  amount       Float
+  currencyCode String?
+
+  externalCreatedAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection BrokerageConnection @relation(fields: [brokerageConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([brokerageConnectionId, externalId])
+  @@index([userId])
+  @@index([brokerageConnectionId, externalCreatedAt])
+  @@map("brokerage_transactions")
+}
+
+// Dividend payments from Trading 212's own /history/dividends — the
+// third genuinely historical, append-only source alongside
+// BrokerageOrder/BrokerageTransaction (see the section header comment
+// for why this isn't merged into either of those: Trading 212 itself
+// keeps dividends as a third, separately-shaped endpoint, and mirroring
+// that directly is more faithful than inventing a merged shape). Named
+// "Activity" (not "Dividend") because a future provider might expose
+// other non-order, non-cash-transfer activity types here too, without
+// needing a schema change.
+model BrokerageActivity {
+  id                    String @id @default(cuid())
+  userId                String
+  brokerageConnectionId String
+  provider              String
+  externalId            String // Trading 212's own dividend reference
+
+  type           String  @default("DIVIDEND")
+  compassAssetId String?
+  externalTicker String?
+  externalName   String?
+
+  quantity            Float?
+  amount              Float
+  grossAmountPerShare Float?
+  currencyCode        String?
+
+  externalCreatedAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection BrokerageConnection @relation(fields: [brokerageConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([brokerageConnectionId, externalId])
+  @@index([userId])
+  @@index([brokerageConnectionId, externalCreatedAt])
+  @@map("brokerage_activities")
+}
+
+// ---------------------------------------------------------------------------
 // Interests / followed themes (Section 10)
 // ---------------------------------------------------------------------------
 
 model UserInterest {
   id        String   @id @default(cuid())
   userId    String
-  key       String   // canonical interest id — see src/lib/interests/interests.ts
+  key       String // canonical interest id — see src/lib/interests/interests.ts
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -271,14 +569,14 @@ enum LessonCompletionState {
 }
 
 model UserLearningProgress {
-  id              String                 @id @default(cuid())
+  id              String                @id @default(cuid())
   userId          String
-  assetId         String                 // canonical asset/course id, e.g. "sp500", "aapl"
-  stepIndex       Int                    @default(0)
-  completionState LessonCompletionState  @default(IN_PROGRESS)
-  startedAt       DateTime               @default(now())
+  assetId         String // canonical asset/course id, e.g. "sp500", "aapl"
+  stepIndex       Int                   @default(0)
+  completionState LessonCompletionState @default(IN_PROGRESS)
+  startedAt       DateTime              @default(now())
   completedAt     DateTime?
-  lastActivityAt  DateTime               @default(now())
+  lastActivityAt  DateTime              @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -294,12 +592,12 @@ model UserLearningProgress {
 model UserQuizResult {
   id                 String   @id @default(cuid())
   userId             String
-  assetId            String   // canonical asset/course id
-  attemptId          String   // client-generated idempotency key for one submission
+  assetId            String // canonical asset/course id
+  attemptId          String // client-generated idempotency key for one submission
   score              Int
   totalQuestions     Int
   passed             Boolean
-  conceptPerformance String?  // JSON-encoded per-concept breakdown, optional
+  conceptPerformance String? // JSON-encoded per-concept breakdown, optional
   completedAt        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -316,8 +614,8 @@ model UserQuizResult {
 model UserXPEvent {
   id        String   @id @default(cuid())
   userId    String
-  eventType String   // "lesson_completed" | "quiz_completed" | "correct_answer" | "first_investment" | "achievement_unlocked" | "asset_path_completed"
-  sourceId  String   // e.g. assetId, `${assetId}:${questionId}`, achievementId
+  eventType String // "lesson_completed" | "quiz_completed" | "correct_answer" | "first_investment" | "achievement_unlocked" | "asset_path_completed"
+  sourceId  String // e.g. assetId, `${assetId}:${questionId}`, achievementId
   amount    Int
   createdAt DateTime @default(now())
 
@@ -338,7 +636,7 @@ model UserXPEvent {
 model UserAchievement {
   id            String   @id @default(cuid())
   userId        String
-  achievementId String   // matches AchievementId in learning/types.ts
+  achievementId String // matches AchievementId in learning/types.ts
   unlockedAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -389,7 +687,7 @@ model UserFavoriteAsset {
 model UserNotificationPreference {
   id        String   @id @default(cuid())
   userId    String
-  category  String   // canonical category id: "news" | "priceAlerts" | "learning" | "achievements"
+  category  String // canonical category id: "news" | "priceAlerts" | "learning" | "achievements"
   enabled   Boolean  @default(true)
   updatedAt DateTime @updatedAt
 
@@ -412,9 +710,9 @@ model UserNotificationPreference {
 // ---------------------------------------------------------------------------
 
 model Notification {
-  id     String @id @default(cuid())
-  userId String
-  type   String // NotificationEventType — see src/server/validation.ts
+  id            String    @id @default(cuid())
+  userId        String
+  type          String // NotificationEventType — see src/server/validation.ts
   // Dedup key: what makes "the same event processed twice" collapse into
   // one row instead of two. Meaning depends on type — see
   // notification-events.ts for the exact per-type value used:

@@ -8,11 +8,9 @@ import { Card } from "@/components/ui/card";
 import { XPProgress } from "@/components/explore/xp-progress";
 import { LearningTrack } from "@/components/explore/learning-track";
 import { AchievementBadge } from "@/components/explore/achievement-badge";
-import { PaperPortfolioCard } from "@/components/explore/paper-portfolio-card";
 import { UnlockCard } from "@/components/explore/unlock-card";
 import { learningTracks } from "@/lib/mock-data";
 import { useProgress } from "@/lib/progress-store";
-import { usePaperAccount } from "@/lib/trading/paper-account-provider";
 import { sp500LessonSteps, sp500Quiz } from "@/lib/lesson-content";
 import { ACHIEVEMENTS } from "@/lib/learning/achievements";
 import { useTranslation } from "@/lib/i18n/locale-provider";
@@ -26,7 +24,6 @@ import { useTranslation } from "@/lib/i18n/locale-provider";
 // components/profile/interests-card.tsx.
 export default function ExplorePage() {
   const { state, levelInfo, isInvestmentUnlocked, learningProgress } = useProgress();
-  const { account } = usePaperAccount();
   const { t } = useTranslation();
 
   const quizAnsweredCount = Object.keys(state.quizAnswers).length;
@@ -78,16 +75,6 @@ export default function ExplorePage() {
             ))}
           </div>
         </Card>
-
-        <PaperPortfolioCard
-          value={account?.portfolioValue ?? 0}
-          changePct={
-            account && account.investedValue !== 0
-              ? (account.unrealizedPnl / account.investedValue) * 100
-              : 0
-          }
-          label={t("explore.paperTrading")}
-        />
 
         <div>
           <h2 className="mb-2 px-1 text-[15px] font-semibold text-ink">{t("explore.nextAsset")}</h2>

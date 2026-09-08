@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { ShieldCheck, Link2, Bell, Users, Languages } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
 import { AccountCard } from "@/components/profile/account-card";
-import { WalletCard } from "@/components/profile/wallet-card";
 import { LinkRow } from "@/components/profile/link-row";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { LOCALE_LABELS } from "@/lib/i18n/dictionaries";
@@ -14,7 +12,8 @@ import { useNotificationPreferences } from "@/lib/notifications/use-notification
 import { formatEnabledChannelsSummary } from "@/lib/notifications/format-channel-summary";
 import { useNews } from "@/lib/news/use-news";
 import { countDistinctSources } from "@/lib/news/count-distinct-sources";
-import { useSession } from "next-auth/react";
+import { useWallet } from "@/lib/wallet/wallet-provider";
+import { useTrading212Connection } from "@/lib/trading212/use-trading212-connection";
 
 // Moved out of the main Profile page (which now just links here via its
 // header's settings gear, previously a dead button with no onClick at
@@ -22,29 +21,21 @@ import { useSession } from "next-auth/react";
 // content, so it belongs on its own screen rather than always inline.
 export default function ProfileSettingsPage() {
   const { t, locale } = useTranslation();
-  const { status } = useSession();
   const { channels: notificationChannels, loaded: notificationsLoaded } = useNotificationPreferences();
   const { items: newsItems, isLoading: newsLoading, error: newsError } = useNews();
   const trustedSourcesCount = countDistinctSources(newsItems);
 
-  // Real connected-accounts count from Auth.js's own Account table — see
-  // /api/user/profile-stats. Never a hardcoded value.
-  const [connectedAccountsCount, setConnectedAccountsCount] = useState<number | null>(null);
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    let cancelled = false;
-    fetch("/api/user/profile-stats")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!cancelled && typeof data?.connectedAccountsCount === "number") {
-          setConnectedAccountsCount(data.connectedAccountsCount);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [status]);
+  // The wallet and Trading 212 cards themselves now live one tap deeper,
+  // on /profile/connected-accounts — this row just needs to know whether
+  // each is actually connected, for a real (never hardcoded) count. 0
+  // when neither is connected, matching the same "not connected yet"
+  // state those cards show on their own page.
+  const { status: walletStatus } = useWallet();
+  const trading212Connection = useTrading212Connection();
+  const walletConnected = walletStatus === "connected";
+  const trading212Connected =
+    trading212Connection.stage === "loaded" && trading212Connection.connection?.status === "CONNECTED";
+  const connectedAccountsCount = (walletConnected ? 1 : 0) + (trading212Connected ? 1 : 0);
 
   const enabledChannelsSummary = notificationsLoaded
     ? formatEnabledChannelsSummary(notificationChannels, {
@@ -57,7 +48,6 @@ export default function ProfileSettingsPage() {
       <Header title={t("general.settings")} backHref="/profile" />
       <div className="space-y-5 px-5">
         <AccountCard variant="accountOnly" />
-        <WalletCard />
 
         <Card className="divide-y divide-border p-0 px-4">
           <LinkRow
@@ -84,15 +74,12 @@ export default function ProfileSettingsPage() {
           <LinkRow
             icon={Link2}
             label={t("linkRows.connectedAccounts")}
-            trailing={
-              connectedAccountsCount != null
-                ? `${connectedAccountsCount} ${
-                    connectedAccountsCount === 1
-                      ? t("linkRows.connectedAccountsTrailing")
-                      : t("linkRows.connectedAccountsTrailingPlural")
-                  }`
-                : undefined
-            }
+            href="/profile/connected-accounts"
+            trailing={`${connectedAccountsCount} ${
+              connectedAccountsCount === 1
+                ? t("linkRows.connectedAccountsTrailing")
+                : t("linkRows.connectedAccountsTrailingPlural")
+            }`}
             colorKey="green"
           />
           <LinkRow

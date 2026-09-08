@@ -63,6 +63,22 @@ function MarketsPageContent() {
     [filter, isFavorite, isInPortfolio]
   );
 
+  // Requirement: perpetuals sorted into their corresponding Markets tab
+  // rather than always dumping the full Hyperliquid list regardless of
+  // which tab is active. `m.assetId` is Hyperliquid's OWN raw coin symbol
+  // (e.g. "BTC", "xyz:AAPL") — never a catalog id — so matching must go
+  // through `m.compassAssetId` (the real catalog id, e.g. "btc"/"aapl")
+  // instead. That's exactly the same All/Favorites/Portfolio/category
+  // filter already applied to `data`, reused rather than reimplemented.
+  // Still a fully separate list/section from the catalog rows above
+  // (never interleaved into one list) — real perpetual markets and
+  // catalog/paper-trading assets stay visually distinct, same principle
+  // as the Portfolio page's Paper/Real separation.
+  const visiblePerpetuals = useMemo(
+    () => hyperliquidMarkets.filter((m) => data.some((a) => a.id === m.compassAssetId)),
+    [hyperliquidMarkets, data]
+  );
+
   return (
     <AppShell>
       <Header title={t("market.markets")} backHref="/" />
@@ -116,13 +132,13 @@ function MarketsPageContent() {
             investment-unlock stage, and are not tradable via Paper Trading.
             Renders nothing at all when the feature is off or unreachable,
             so the rest of this page is unaffected either way. */}
-        {hyperliquidEnabled && hyperliquidMarkets.length > 0 ? (
+        {hyperliquidEnabled && visiblePerpetuals.length > 0 ? (
           <div className="mt-6">
             <h2 className="px-1 text-[15px] font-semibold text-ink">
               {t("market.perpetualsHyperliquid")}
             </h2>
             <div className="mt-1 divide-y divide-border">
-              {hyperliquidMarkets.map((m) => (
+              {visiblePerpetuals.map((m) => (
                 <HyperliquidMarketRow key={m.assetId} market={m} />
               ))}
             </div>
