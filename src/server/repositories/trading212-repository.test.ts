@@ -166,7 +166,7 @@ describe("getTrading212Connection — never returns credential fields, always sc
     expect(connection).not.toHaveProperty("apiKey");
     expect(connection).not.toHaveProperty("apiSecret");
     expect(Object.keys(connection!).sort()).toEqual(
-      ["createdAt", "lastConnectedAt", "lastSyncAt", "status", "updatedAt"].sort()
+      ["createdAt", "lastConnectedAt", "lastFailedSyncAt", "lastSyncAt", "status", "syncError", "syncStatus", "updatedAt"].sort()
     );
   });
 

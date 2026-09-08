@@ -11,6 +11,13 @@ export type Trading212ConnectionDTO = {
   updatedAt: string;
   lastConnectedAt: string | null;
   lastSyncAt: string | null;
+  syncStatus: "NEVER_SYNCED" | "SYNCING" | "SYNCED" | "FAILED";
+  syncError: string | null;
+  /** Phase 5 — distinct from lastSyncAt (last SUCCESSFUL sync): the
+   * timestamp of the most recent FAILED attempt, for the connection-
+   * health UI (Requirement 6/13). Null if the connection has never had a
+   * failed sync. */
+  lastFailedSyncAt: string | null;
 };
 
 export type ConnectTrading212Result =
@@ -24,6 +31,9 @@ function toDTO(row: {
   updatedAt: Date;
   lastConnectedAt: Date | null;
   lastSyncAt: Date | null;
+  syncStatus: string;
+  syncError: string | null;
+  lastFailedSyncAt: Date | null;
 }): Trading212ConnectionDTO {
   return {
     status: row.status as Trading212ConnectionDTO["status"],
@@ -31,6 +41,9 @@ function toDTO(row: {
     updatedAt: row.updatedAt.toISOString(),
     lastConnectedAt: row.lastConnectedAt ? row.lastConnectedAt.toISOString() : null,
     lastSyncAt: row.lastSyncAt ? row.lastSyncAt.toISOString() : null,
+    syncStatus: row.syncStatus as Trading212ConnectionDTO["syncStatus"],
+    syncError: row.syncError,
+    lastFailedSyncAt: row.lastFailedSyncAt ? row.lastFailedSyncAt.toISOString() : null,
   };
 }
 

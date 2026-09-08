@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Star, Lock, LockOpen, BookOpen, Share2, Check } from "lucide-react";
+import { Star, Lock, LockOpen, BookOpen, Share2, Check, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
@@ -23,6 +23,10 @@ import { isMarketSymbol } from "@/lib/market/market-types";
 import { priceFromQuoteResult } from "@/lib/market/quote-to-trade";
 import { usePaperAccount, usePosition } from "@/lib/trading/paper-account-provider";
 import { useAchievementShare } from "@/lib/share/use-achievement-share";
+import { useTrading212Activity } from "@/lib/trading212/use-trading212-activity";
+import { Trading212ActivityList } from "@/components/portfolio/trading212-activity-list";
+import { Trading212ActivityFilterBar, type Trading212ActivityFilter } from "@/components/portfolio/trading212-activity-filter-bar";
+import { AssetSourcePositions } from "@/components/asset/asset-source-positions";
 
 export default function AssetDetailPage({
   params,
@@ -44,6 +48,18 @@ export default function AssetDetailPage({
   const { account, placeTrade } = usePaperAccount();
   const existingPosition = usePosition(isMarketSymbol(slug) ? slug : "sp500");
   const { share, sharing, shared, isSignedIn: shareSignedIn } = useAchievementShare();
+  // Requirement 9: this asset's own Trading 212 transaction history, kept
+  // fully separate from the paper-trading position/CTA below — Trading
+  // 212 activity is real imported data, never mixed with paper trades.
+  const [activityFilter, setActivityFilter] = useState<Trading212ActivityFilter>("all");
+  const trading212Activity = useTrading212Activity({ assetId: slug, kind: activityFilter, limit: 20 });
+  // A separate, filter-independent existence check — whether the section
+  // (heading + filter bar) shows up at all shouldn't flicker away just
+  // because the user picked a filter with nothing under it for this
+  // asset (e.g. "Dividends" on a stock they've only ever bought).
+  const trading212AnyActivity = useTrading212Activity({ assetId: slug, limit: 1 });
+  const hasAnyTrading212Activity =
+    trading212AnyActivity.stage === "loaded" && trading212AnyActivity.items.length > 0;
 
   // Tracks "assets explored" for the learning-progress model. Deferred via
   // setTimeout so this doesn't fire as a synchronous setState call from
@@ -241,6 +257,38 @@ export default function AssetDetailPage({
               : `${asset.name} (${asset.symbol}) ${t("market.aboutStockBody")}`}
           </p>
         </Card>
+
+        <AssetSourcePositions assetId={asset.id} />
+
+        {hasAnyTrading212Activity ? (
+          <Card>
+            <h2 className="text-[15px] font-semibold text-ink">{t("trading212.yourHistoryForThisAsset")}</h2>
+            <div className="mt-2">
+              <Trading212ActivityFilterBar value={activityFilter} onChange={setActivityFilter} includeAccountLevel={false} />
+            </div>
+            {trading212Activity.stage === "loading" ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 size={18} className="animate-spin text-ink-faint" />
+              </div>
+            ) : trading212Activity.stage === "error" ? (
+              <p className="py-4 text-center text-[13px] text-negative">{t("trading212.activityLoadError")}</p>
+            ) : (
+              <>
+                <Trading212ActivityList items={trading212Activity.items} />
+                {trading212Activity.nextCursor ? (
+                  <button
+                    onClick={() => void trading212Activity.loadMore()}
+                    disabled={trading212Activity.loadingMore}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-border py-2 text-[13px] font-medium text-ink hover:bg-surface-2 disabled:opacity-60"
+                  >
+                    {trading212Activity.loadingMore ? <Loader2 size={13} className="animate-spin" /> : null}
+                    {trading212Activity.loadingMore ? t("trading212.loadingMore") : t("trading212.loadMore")}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </Card>
+        ) : null}
 
         {!unlocked ? null : existingPosition ? (
           <button

@@ -1,5 +1,12 @@
 import "server-only";
-import { fetchTrading212AccountInfo } from "./trading212-client";
+import {
+  fetchTrading212AccountInfo,
+  fetchTrading212AccountSummary,
+  fetchTrading212Positions,
+  fetchTrading212OrderHistoryPage,
+  fetchTrading212DividendsPage,
+  fetchTrading212TransactionsPage,
+} from "./trading212-client";
 import type { BrokerageProvider, ValidateCredentialsResult } from "./brokerage-provider";
 
 /** The Trading 212 BrokerageProvider adapter — validates a real key+secret
@@ -20,4 +27,12 @@ export const trading212Provider: BrokerageProvider = {
     }
     return { ok: true, externalAccountId: result.data.id };
   },
+
+  getAccountSummary: (credentials) => fetchTrading212AccountSummary(credentials.apiKey, credentials.apiSecret),
+  getPositions: (credentials) => fetchTrading212Positions(credentials.apiKey, credentials.apiSecret),
+  getOrderHistoryPage: (credentials, cursor) =>
+    fetchTrading212OrderHistoryPage(credentials.apiKey, credentials.apiSecret, cursor),
+  getDividendsPage: (credentials, cursor) => fetchTrading212DividendsPage(credentials.apiKey, credentials.apiSecret, cursor),
+  getTransactionsPage: (credentials, cursor) =>
+    fetchTrading212TransactionsPage(credentials.apiKey, credentials.apiSecret, cursor),
 };

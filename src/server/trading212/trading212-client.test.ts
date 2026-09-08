@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { fetchTrading212AccountInfo, getTrading212BaseUrl } from "./trading212-client";
+import {
+  fetchTrading212AccountInfo,
+  getTrading212BaseUrl,
+  fetchTrading212AccountSummary,
+  fetchTrading212Positions,
+  fetchTrading212OrderHistoryPage,
+  fetchTrading212DividendsPage,
+  fetchTrading212TransactionsPage,
+} from "./trading212-client";
 
 function jsonResponse(body: unknown, init?: { status?: number }) {
   return {
@@ -146,5 +154,395 @@ describe("fetchTrading212AccountInfo", () => {
     logSpy.mockRestore();
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+});
+
+describe("fetchTrading212AccountSummary — defensive field parsing", () => {
+  it("reads the nested cash/investments shape when present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          currency: "USD",
+          totalValue: 10500.5,
+          cash: { availableToTrade: 200, inPies: 50, reservedForOrders: 10 },
+          investments: { currentValue: 10250.5, realizedProfitLoss: 30, unrealizedProfitLoss: 120 },
+        })
+      )
+    );
+
+    const result = await fetchTrading212AccountSummary("key", "secret");
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        currencyCode: "USD",
+        totalValue: 10500.5,
+        cashAvailable: 200,
+        cashInPies: 50,
+        cashReserved: 10,
+        investedValue: 10250.5,
+        realizedPnl: 30,
+        unrealizedPnl: 120,
+      },
+    });
+  });
+
+  it("never fabricates a value for a field that's genuinely absent from the response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ currencyCode: "USD" })));
+
+    const result = await fetchTrading212AccountSummary("key", "secret");
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        currencyCode: "USD",
+        totalValue: undefined,
+        cashAvailable: undefined,
+        cashInPies: undefined,
+        cashReserved: undefined,
+        investedValue: undefined,
+        realizedPnl: undefined,
+        unrealizedPnl: undefined,
+      },
+    });
+  });
+
+  it("propagates a network failure as network_error, never throwing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    const result = await fetchTrading212AccountSummary("key", "secret");
+    expect(result).toEqual({ ok: false, reason: "network_error", message: expect.any(String) });
+  });
+});
+
+describe("fetchTrading212Positions — defensive field parsing", () => {
+  it("reads a flat position shape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse([
+          { ticker: "AAPL_US_EQ", quantity: 10, averagePrice: 150, currentPrice: 181.42, ppl: 314.2 },
+        ])
+      )
+    );
+
+    const result = await fetchTrading212Positions("key", "secret");
+
+    expect(result).toEqual({
+      ok: true,
+      data: [
+        {
+          externalTicker: "AAPL_US_EQ",
+          externalName: undefined,
+          currencyCode: undefined,
+          quantity: 10,
+          averagePrice: 150,
+          currentPrice: 181.42,
+          unrealizedPnl: 314.2,
+        },
+      ],
+    });
+  });
+
+  it("reads a nested instrument/walletImpact position shape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse([
+          {
+            quantity: 5,
+            averagePricePaid: 200,
+            instrument: { ticker: "NVDA_US_EQ", name: "NVIDIA Corp.", currency: "USD" },
+            walletImpact: { unrealizedProfitLoss: 45.5 },
+          },
+        ])
+      )
+    );
+
+    const result = await fetchTrading212Positions("key", "secret");
+
+    expect(result).toEqual({
+      ok: true,
+      data: [
+        {
+          externalTicker: "NVDA_US_EQ",
+          externalName: "NVIDIA Corp.",
+          currencyCode: "USD",
+          quantity: 5,
+          averagePrice: 200,
+          currentPrice: undefined,
+          unrealizedPnl: 45.5,
+        },
+      ],
+    });
+  });
+
+  it("drops an entry with no identifiable ticker or quantity instead of fabricating one", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ currentPrice: 100 }])));
+
+    const result = await fetchTrading212Positions("key", "secret");
+
+    expect(result).toEqual({ ok: true, data: [] });
+  });
+
+  it("classifies a non-array response as malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ not: "an array" })));
+
+    const result = await fetchTrading212Positions("key", "secret");
+
+    expect(result).toEqual({ ok: false, reason: "malformed_response", message: expect.any(String) });
+  });
+});
+
+describe("fetchTrading212OrderHistoryPage — pagination", () => {
+  it("parses items and extracts a direct nextCursor field", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            {
+              id: 555,
+              ticker: "AAPL_US_EQ",
+              side: "BUY",
+              status: "FILLED",
+              quantity: 10,
+              filledQuantity: 10,
+              fillPrice: 181.42,
+              currency: "USD",
+              dateCreated: "2026-08-12T10:00:00.000Z",
+            },
+          ],
+          nextCursor: "abc123",
+        })
+      )
+    );
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        items: [
+          {
+            externalId: "555",
+            externalTicker: "AAPL_US_EQ",
+            externalName: undefined,
+            side: "BUY",
+            status: "FILLED",
+            quantity: 10,
+            filledQuantity: 10,
+            fillPrice: 181.42,
+            currencyCode: "USD",
+            externalCreatedAt: "2026-08-12T10:00:00.000Z",
+          },
+        ],
+        nextCursor: "abc123",
+      },
+    });
+  });
+
+  it("extracts a cursor from a nextPagePath URL when no direct cursor field exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [],
+          nextPagePath: "/equity/history/orders?cursor=xyz789&limit=50",
+        })
+      )
+    );
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.nextCursor).toBe("xyz789");
+  });
+
+  it("returns a null nextCursor (terminating pagination) when the response carries neither", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [] })));
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.nextCursor).toBeNull();
+  });
+
+  it("drops an order with no id, ticker, or creation time", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [{ side: "BUY" }] })));
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result).toEqual({ ok: true, data: { items: [], nextCursor: null } });
+  });
+
+  it("classifies a 429 as rate_limited", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 429 })));
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result).toEqual({ ok: false, reason: "rate_limited", message: expect.any(String) });
+  });
+
+  it("Phase 4 fix: keeps a genuine per-unit fillPrice separate from the aggregate filledValue, never conflating them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            {
+              id: 1,
+              ticker: "AAPL_US_EQ",
+              filledQuantity: 5,
+              fillPrice: 180.2, // a genuine per-unit field
+              filledValue: 901.0, // the real aggregate — NOT the same number, must not be swapped
+              dateCreated: "2026-09-06T00:00:00.000Z",
+            },
+          ],
+        })
+      )
+    );
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items[0].fillPrice).toBe(180.2);
+      expect(result.data.items[0].filledValue).toBe(901.0);
+    }
+  });
+
+  it("derives a per-unit fillPrice from filledValue/filledQuantity only when no genuine per-unit field exists — a real division, not a fabrication", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            {
+              id: 2,
+              ticker: "NVDA_US_EQ",
+              filledQuantity: 5,
+              filledValue: 901.0,
+              dateCreated: "2026-09-06T00:00:00.000Z",
+            },
+          ],
+        })
+      )
+    );
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items[0].fillPrice).toBeCloseTo(180.2);
+      expect(result.data.items[0].filledValue).toBe(901.0);
+    }
+  });
+
+  it("never derives a fillPrice when there's no filledQuantity to divide by (would-be division by zero/undefined)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [{ id: 3, ticker: "AAPL_US_EQ", filledValue: 901.0, dateCreated: "2026-09-06T00:00:00.000Z" }],
+        })
+      )
+    );
+
+    const result = await fetchTrading212OrderHistoryPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.items[0].fillPrice).toBeUndefined();
+  });
+});
+
+describe("fetchTrading212DividendsPage", () => {
+  it("parses a dividend and falls back to a composite id when no reference/id is present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [{ ticker: "AAPL_US_EQ", amount: 4.32, paidOn: "2026-08-01T00:00:00.000Z" }],
+        })
+      )
+    );
+
+    const result = await fetchTrading212DividendsPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items).toEqual([
+        {
+          externalId: "AAPL_US_EQ:2026-08-01T00:00:00.000Z:4.32",
+          externalTicker: "AAPL_US_EQ",
+          externalName: undefined,
+          quantity: undefined,
+          amount: 4.32,
+          grossAmountPerShare: undefined,
+          currencyCode: undefined,
+          externalCreatedAt: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+    }
+  });
+
+  it("uses a real reference id when Trading 212 provides one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ items: [{ reference: "div-ref-1", amount: 1, paidOn: "2026-08-01T00:00:00.000Z" }] })
+      )
+    );
+
+    const result = await fetchTrading212DividendsPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.items[0].externalId).toBe("div-ref-1");
+  });
+
+  it("drops a dividend with no amount or paid date", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [{ ticker: "AAPL_US_EQ" }] })));
+
+    const result = await fetchTrading212DividendsPage("key", "secret");
+
+    expect(result).toEqual({ ok: true, data: { items: [], nextCursor: null } });
+  });
+});
+
+describe("fetchTrading212TransactionsPage", () => {
+  it("parses a deposit/withdrawal/fee transaction", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [{ type: "DEPOSIT", amount: 500, dateTime: "2026-07-01T00:00:00.000Z" }],
+        })
+      )
+    );
+
+    const result = await fetchTrading212TransactionsPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items[0]).toEqual({
+        externalId: "DEPOSIT:2026-07-01T00:00:00.000Z:500",
+        type: "DEPOSIT",
+        amount: 500,
+        currencyCode: undefined,
+        externalCreatedAt: "2026-07-01T00:00:00.000Z",
+      });
+    }
+  });
+
+  it("handles a raw array response (no items wrapper) the same as a wrapped one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse([{ type: "FEE", amount: -1.5, dateTime: "2026-07-02T00:00:00.000Z" }]))
+    );
+
+    const result = await fetchTrading212TransactionsPage("key", "secret");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.items).toHaveLength(1);
   });
 });

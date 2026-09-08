@@ -1,35 +1,41 @@
 "use client";
 
+import { useState } from "react";
 import { Eye } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
-import { Card } from "@/components/ui/card";
-import { PerformanceChart } from "@/components/portfolio/performance-chart";
-import { HoldingsList } from "@/components/portfolio/holdings-list";
-import { HyperliquidAccountPanel } from "@/components/portfolio/hyperliquid-account-panel";
-import { usePaperAccount } from "@/lib/trading/paper-account-provider";
-import { accountToHoldings } from "@/lib/trading/holdings";
-import { formatCurrency, formatSignedPercent } from "@/lib/utils";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { PaperTradingCard } from "@/components/portfolio/paper-trading-card";
+import { HyperliquidPortfolioCard } from "@/components/portfolio/hyperliquid-portfolio-card";
+import { Trading212AccountPanel } from "@/components/portfolio/trading212-account-panel";
+import { AskCompassCard } from "@/components/portfolio/ask-compass-card";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 
+type PortfolioTab = "all" | "paper" | "trading212" | "hyperliquid";
+
+// Requirement (Paper/Real redesign): Paper Trading (simulated), Trading
+// 212, and Hyperliquid (two INDEPENDENT real accounts) are always
+// rendered as separate sections with their own real numbers — there is
+// NO combined "Total Portfolio Value" anywhere on this page, and never
+// will be, since paper money and two genuinely different real accounts
+// are never the same account. Trading 212 and Hyperliquid get their own
+// tabs (not one merged "Real" bucket) for the same reason: a "Real"
+// filter that showed both together risked reading as one combined real
+// balance even without a computed total. The tab control below is a pure
+// UI filter over which sections are visible; it never triggers a
+// different data fetch or computes any cross-source total.
 export default function PortfolioPage() {
-  const { account } = usePaperAccount();
   const { t } = useTranslation();
+  const [tab, setTab] = useState<PortfolioTab>("all");
 
-  // Real numbers from the same paper account Home/Position/Markets read
-  // from — no mock portfolio value, no separate local state. "Change" is
-  // shown as total unrealized P&L (no daily-open snapshot is tracked yet
-  // to compute a true daily figure — see PortfolioCard for the same call).
-  const portfolioValue = account?.portfolioValue ?? 0;
-  const investedValue = account?.investedValue ?? 0;
-  const unrealizedPnl = account?.unrealizedPnl ?? 0;
-  const unrealizedPnlPct = investedValue !== 0 ? (unrealizedPnl / investedValue) * 100 : 0;
-
-  // Real holdings, mapped into the existing HoldingsList's shape — same
-  // component/visual design, just fed real positions instead of the old
-  // mock `holdings` array. Shared with Home's preview card via
-  // accountToHoldings() rather than two copies of the same mapping.
-  const holdings = accountToHoldings(account);
+  const showPaper = tab === "all" || tab === "paper";
+  const showTrading212 = tab === "all" || tab === "trading212";
+  const showHyperliquid = tab === "all" || tab === "hyperliquid";
+  // The grouping heading only makes sense when both real sources are
+  // visible together (the "all" tab) — on a single-source tab, the tab
+  // itself already says which account this is, so repeating "Real
+  // Portfolios" above one lone card would be redundant framing.
+  const showRealPortfoliosHeading = tab === "all";
 
   return (
     <AppShell>
@@ -46,52 +52,35 @@ export default function PortfolioPage() {
       />
 
       <div className="space-y-5 px-5">
-        <div>
-          <p className="text-[13px] font-medium text-ink-muted">
-            {t("portfolio.totalPortfolioValue")}
-          </p>
-          <p className="mt-1 text-[28px] font-semibold tracking-tight text-ink">
-            {formatCurrency(portfolioValue)}
-          </p>
-          <span
-            className={
-              unrealizedPnlPct >= 0
-                ? "text-[13px] font-medium text-positive"
-                : "text-[13px] font-medium text-negative"
-            }
-          >
-            {formatSignedPercent(unrealizedPnlPct)} unrealized
-          </span>
+        <div className="-mx-5 overflow-x-auto px-5">
+          <SegmentedTabs
+            value={tab}
+            onChange={setTab}
+            options={[
+              { id: "all", label: t("portfolio.tabAll") },
+              { id: "paper", label: t("portfolio.tabPaper") },
+              { id: "trading212", label: t("portfolio.tabTrading212") },
+              { id: "hyperliquid", label: t("portfolio.tabHyperliquid") },
+            ]}
+          />
         </div>
 
-        <Card>
-          <PerformanceChart />
-        </Card>
+        {showPaper ? <PaperTradingCard /> : null}
 
-        <Card>
-          <h2 className="text-[15px] font-semibold text-ink">{t("portfolio.holdings")}</h2>
-          {holdings.length > 0 ? (
-            <HoldingsList holdings={holdings} />
-          ) : (
-            <p className="py-6 text-center text-[13px] text-ink-muted">
-              No holdings yet — buy an asset from Markets to see it here.
-            </p>
-          )}
-        </Card>
+        {showTrading212 || showHyperliquid ? (
+          <>
+            {showRealPortfoliosHeading ? (
+              <div>
+                <h2 className="px-1 text-[15px] font-semibold text-ink">{t("portfolio.realPortfoliosHeading")}</h2>
+                <p className="px-1 text-[12px] text-ink-muted">{t("portfolio.realPortfoliosSubheading")}</p>
+              </div>
+            ) : null}
+            {showTrading212 ? <Trading212AccountPanel /> : null}
+            {showHyperliquid ? <HyperliquidPortfolioCard /> : null}
+          </>
+        ) : null}
 
-        {/* Deliberately separate from "Paper portfolio value"/Holdings
-            above — real Hyperliquid trades never factor into that number
-            or list (Paper Trading and real Hyperliquid trading are
-            independent systems throughout this app). A user trading real
-            assets otherwise has no on-page cue that their real
-            balance/positions live down here instead, in
-            HyperliquidAccountPanel — see the real, reported confusion
-            this heading fixes. */}
-        <div>
-          <h2 className="px-1 text-[15px] font-semibold text-ink">{t("hyperliquidAccount.realTradingHeading")}</h2>
-          <p className="px-1 text-[12px] text-ink-muted">{t("hyperliquidAccount.realTradingSubheading")}</p>
-        </div>
-        <HyperliquidAccountPanel />
+        <AskCompassCard />
       </div>
     </AppShell>
   );
