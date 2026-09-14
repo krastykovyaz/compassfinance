@@ -16,11 +16,12 @@
 import type { AssetId } from "@/lib/assets/catalog";
 import { getAsset } from "@/lib/assets/catalog";
 import type { Trading212PositionDTO } from "@/server/repositories/trading212-portfolio-repository";
+import type { InteractiveBrokersPositionDTO } from "@/server/repositories/interactive-brokers-portfolio-repository";
 import type { PaperPositionView } from "@/lib/trading/types";
 import type { HyperliquidPosition } from "@/lib/hyperliquid/hyperliquid-types";
 import { getAssetIdForHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
 
-export type PortfolioSource = "trading212" | "hyperliquid" | "paper";
+export type PortfolioSource = "trading212" | "interactive_brokers" | "hyperliquid" | "paper";
 
 export type SourcedPosition = {
   source: PortfolioSource;
@@ -78,6 +79,36 @@ export function normalizeTrading212Position(
     marketValue,
     currency: position.currencyCode,
     unrealizedPnl,
+    lastSyncAt,
+  };
+}
+
+// Interactive Brokers positions already carry their own real
+// unrealizedPnl (from IBKR's own /portfolio2/{accountId}/positions — see
+// interactive-brokers-client.ts), so — unlike Trading 212's own
+// normalizer just above — there is no "derive it from currentPrice minus
+// averagePrice" fallback needed here: the real value is always read
+// straight from what was actually synced. `displayName` falls back to
+// the raw provider label (a symbol/description, not always a true
+// ticker) exactly like Trading 212's own fallback chain.
+export function normalizeInteractiveBrokersPosition(
+  position: InteractiveBrokersPositionDTO,
+  lastSyncAt: string | null
+): SourcedPosition {
+  const asset = position.compassAssetId ? getAsset(position.compassAssetId) : undefined;
+  const marketValue = position.currentPrice != null ? position.currentPrice * position.quantity : null;
+
+  return {
+    source: "interactive_brokers",
+    compassAssetId: (position.compassAssetId as AssetId | null) ?? null,
+    displayName: asset?.name ?? position.externalName ?? position.externalTicker,
+    technicalTicker: position.externalTicker,
+    quantity: position.quantity,
+    averagePrice: position.averagePrice,
+    currentPrice: position.currentPrice,
+    marketValue,
+    currency: position.currencyCode,
+    unrealizedPnl: position.unrealizedPnl,
     lastSyncAt,
   };
 }

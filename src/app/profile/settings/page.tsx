@@ -14,6 +14,7 @@ import { useNews } from "@/lib/news/use-news";
 import { countDistinctSources } from "@/lib/news/count-distinct-sources";
 import { useWallet } from "@/lib/wallet/wallet-provider";
 import { useTrading212Connection } from "@/lib/trading212/use-trading212-connection";
+import { useInteractiveBrokersConnection } from "@/lib/interactive-brokers/use-interactive-brokers-connection";
 
 // Moved out of the main Profile page (which now just links here via its
 // header's settings gear, previously a dead button with no onClick at
@@ -32,10 +33,15 @@ export default function ProfileSettingsPage() {
   // state those cards show on their own page.
   const { status: walletStatus } = useWallet();
   const trading212Connection = useTrading212Connection();
+  const interactiveBrokersConnection = useInteractiveBrokersConnection();
   const walletConnected = walletStatus === "connected";
   const trading212Connected =
     trading212Connection.stage === "loaded" && trading212Connection.connection?.status === "CONNECTED";
-  const connectedAccountsCount = (walletConnected ? 1 : 0) + (trading212Connected ? 1 : 0);
+  const interactiveBrokersConnected =
+    interactiveBrokersConnection.stage === "loaded" &&
+    interactiveBrokersConnection.connection?.status === "CONNECTED";
+  const connectedAccountsCount =
+    (walletConnected ? 1 : 0) + (trading212Connected ? 1 : 0) + (interactiveBrokersConnected ? 1 : 0);
 
   const enabledChannelsSummary = notificationsLoaded
     ? formatEnabledChannelsSummary(notificationChannels, {

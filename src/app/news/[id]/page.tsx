@@ -14,6 +14,7 @@ import { findNewsById, SYMBOL_TO_SLUG, NewsItem } from "@/lib/news/news-types";
 import { formatRelativeTime } from "@/lib/utils";
 import { ColorKey } from "@/lib/mock-data";
 import { useTranslation } from "@/lib/i18n/locale-provider";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 const CATEGORY_COLOR: Record<NewsItem["category"], ColorKey> = {
   stocks: "slate",
@@ -39,6 +40,7 @@ export default function NewsDetailPage({ params }: { params: Promise<{ id: strin
   const { items, isLoading, error } = useNews();
   const [imgFailed, setImgFailed] = useState(false);
   const { t } = useTranslation();
+  useSetCompassContext({ type: "NEWS", articleId: id });
 
   const article = findNewsById(items, id);
   const showImage = Boolean(article?.imageUrl) && !imgFailed;

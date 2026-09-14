@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { IconCircle } from "@/components/ui/icon-circle";
 import { useTrading212Portfolio } from "@/lib/trading212/use-trading212-portfolio";
 import { useTrading212Activity } from "@/lib/trading212/use-trading212-activity";
-import { Trading212ActivityList } from "@/components/portfolio/trading212-activity-list";
+import { ActivityList } from "@/components/portfolio/activity-list";
 import { Trading212ActivityFilterBar, type Trading212ActivityFilter } from "@/components/portfolio/trading212-activity-filter-bar";
 import { Trading212ConnectModal } from "@/components/profile/trading212-connect-modal";
 import { normalizeTrading212Position } from "@/lib/portfolio/portfolio-sources";
@@ -285,7 +285,7 @@ export function Trading212AccountPanel() {
             <p className="py-4 text-center text-[13px] text-ink-muted">{t("trading212.activitySyncPrompt")}</p>
           ) : (
             <>
-              <Trading212ActivityList items={activityState.items} />
+              <ActivityList items={activityState.items} sourceLabel={t("trading212.source")} emptyLabel={t("trading212.noActivity")} />
               {activityState.nextCursor ? (
                 <button
                   onClick={() => void activityState.loadMore()}

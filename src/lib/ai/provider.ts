@@ -21,6 +21,17 @@ export type AICompletionRequest = {
   expectJson: boolean;
   temperature?: number;
   maxTokens?: number;
+  /** When true, disables the model's internal reasoning/"thinking" phase,
+   * if the provider supports doing so. DeepSeek's reasoning-capable
+   * models spend part of `maxTokens` on an internal `reasoning_tokens`
+   * pass BEFORE producing any visible content — for a deterministic
+   * structured-output task that doesn't benefit from deliberation, this
+   * can silently consume the entire token budget and return truncated,
+   * unparseable output (observed live: `reasoning_tokens` alone exceeded
+   * a 700-token cap, leaving zero tokens for the actual JSON — see
+   * compass-engine.ts, the first caller to set this). Leave unset for
+   * callers happy with the provider's default behavior. */
+  disableReasoning?: boolean;
 };
 
 export type AIErrorKind =

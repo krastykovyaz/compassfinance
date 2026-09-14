@@ -20,7 +20,9 @@ import { getLessonHref } from "@/lib/learning/routes";
 import { XP_REWARDS } from "@/lib/gamification";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { isAssetId } from "@/lib/assets/catalog";
+import { getInvestmentUnlockStage } from "@/lib/learning/unlocks";
 import { toDifficultyLevel } from "@/lib/ai/difficulty";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 type Stage = "lesson" | "quiz" | "quiz-result";
 
@@ -114,6 +116,12 @@ function AssetLearningFlow({
     [correctCount]
   );
 
+  useSetCompassContext({
+    type: "LEARNING",
+    assetId,
+    lessonId: path.lessons[Math.min(visibleLessons - 1, path.lessons.length - 1)]?.id ?? null,
+  });
+
   // Course-level prerequisite gate — placed AFTER every hook above (React
   // Hooks must run unconditionally on every render), before any of the
   // normal lesson/quiz rendering below.
@@ -132,7 +140,14 @@ function AssetLearningFlow({
             <p className="mt-1 text-[13px] font-medium text-ink">
               {t("market.completeFirst")}: {blocker.name}
             </p>
-            <p className="mt-1 text-[13px] text-ink-muted">{blocker.unlockDescription}</p>
+            {/* THIS course's own unlock description ("Complete Apple to
+             * unlock Tesla"), not blocker.unlockDescription — a real
+             * reported bug: blocker.unlockDescription described how the
+             * BLOCKER itself gets unlocked (e.g. "Complete Nasdaq to
+             * unlock Apple" while viewing Tesla, having named Apple as
+             * what to complete), an unrelated, one-level-removed
+             * prerequisite instead of this course's own. */}
+            <p className="mt-1 text-[13px] text-ink-muted">{getInvestmentUnlockStage(assetId)?.unlockDescription ?? t("learning.unlockDescriptionGeneric")}</p>
             <Link
               href={getLessonHref(blocker.assetId)}
               className="mt-3 flex items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"

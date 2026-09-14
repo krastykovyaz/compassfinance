@@ -18,7 +18,8 @@ export type PerpOrderValidationError =
   | "invalid-leverage"
   | "leverage-exceeds-max"
   | "insufficient-balance"
-  | "price-unavailable";
+  | "price-unavailable"
+  | "below-minimum-notional";
 
 export type PerpOrderPreview = {
   side: PerpSide;
@@ -58,6 +59,16 @@ export type PerpOrderPreviewInput = {
 // This is the standard/lowest volume tier's rate, used here only as a
 // clearly-labeled estimate for a preview that submits nothing.
 export const TAKER_FEE_RATE = 0.00045;
+
+// Hyperliquid rejects any order below this notional (margin * leverage)
+// value platform-wide — confirmed via a real rejection this app has
+// actually seen and classified server-side (service.ts's
+// classifyExchangeResponse / service.test.ts's "minimum order value"
+// case: "Order must have minimum value of $10."). Checking it here,
+// BEFORE the user ever signs anything, means a doomed-to-fail order is
+// caught at the input stage instead of after a real wallet signature and
+// a real round trip to Hyperliquid.
+export const MIN_NOTIONAL_VALUE_USD = 10;
 
 export function calculateNotionalValue(marginUsdc: number, leverage: number): number {
   return marginUsdc * leverage;
@@ -115,6 +126,7 @@ export function validatePerpOrderInput(input: PerpOrderPreviewInput): PerpOrderV
   if (!Number.isFinite(leverage) || leverage < 1) return "invalid-leverage";
   if (leverage > maxLeverage) return "leverage-exceeds-max";
   if (marginUsdc > availableBalance) return "insufficient-balance";
+  if (calculateNotionalValue(marginUsdc, leverage) < MIN_NOTIONAL_VALUE_USD) return "below-minimum-notional";
   return null;
 }
 

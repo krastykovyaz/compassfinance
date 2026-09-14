@@ -1,7 +1,26 @@
 "use client";
 
+// Provider-neutral activity list — generalized from trading212-activity-
+// list.tsx (Phase 3, alongside activity-normalizer.ts's own move to
+// lib/portfolio/) so Interactive Brokers' own activity renders through
+// the SAME component instead of a second, visually-inconsistent one (the
+// Milestone instruction: "reuse the existing unified Activity UI... Add
+// IBKR as a source within the existing activity architecture").
+//
+// `describeItem`'s own kind-based labels (Order/Dividend/Deposit/Fee/...)
+// still read the `trading212.*` i18n keys below — deliberately: their
+// STRING VALUES ("Order", "Dividend", ...) are generic English words
+// correct for any brokerage source, only their key NAMESPACE happens to
+// be historical (same reuse-despite-naming precedent already established
+// for formatTrading212Currency, reused as-is for Interactive Brokers in
+// Phase 2). `sourceLabel` is the one genuinely per-provider piece of
+// text — passed in explicitly by the caller (Trading212AccountPanel
+// passes "Trading 212", InteractiveBrokersAccountPanel passes
+// "Interactive Brokers") rather than hardcoded, since a hardcoded label
+// here would have mislabeled every IBKR row as "Trading 212".
+
 import { Landmark } from "lucide-react";
-import type { NormalizedActivityItem } from "@/lib/trading212/activity-normalizer";
+import type { NormalizedActivityItem } from "@/lib/portfolio/activity-normalizer";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { formatTrading212CurrencyWithCode } from "@/lib/trading212/currency";
 
@@ -67,11 +86,23 @@ function describeItem(item: NormalizedActivityItem, t: (key: string) => string):
 
 export { describeItem };
 
-export function Trading212ActivityList({ items }: { items: NormalizedActivityItem[] }) {
+export function ActivityList({
+  items,
+  sourceLabel,
+  emptyLabel,
+}: {
+  items: NormalizedActivityItem[];
+  /** Per-provider display label ("Trading 212", "Interactive Brokers") —
+   * shown next to each row's date. Never hardcoded here (see file header). */
+  sourceLabel: string;
+  /** Empty-state copy, since the two providers' "nothing synced yet"
+   * messages read slightly differently in each locale. */
+  emptyLabel: string;
+}) {
   const { t, locale } = useTranslation();
 
   if (items.length === 0) {
-    return <p className="py-4 text-center text-[13px] text-ink-muted">{t("trading212.noActivity")}</p>;
+    return <p className="py-4 text-center text-[13px] text-ink-muted">{emptyLabel}</p>;
   }
 
   return (
@@ -92,7 +123,7 @@ export function Trading212ActivityList({ items }: { items: NormalizedActivityIte
               <p className="truncate text-[13px] font-medium text-ink">{title}</p>
               <p className="truncate text-[11px] text-ink-muted">{subtitle}</p>
               <p className="text-[11px] text-ink-faint">
-                {t("trading212.source")} · {date}
+                {sourceLabel} · {date}
               </p>
             </div>
             <p className="shrink-0 text-[13px] font-medium text-ink">{amount ?? "—"}</p>

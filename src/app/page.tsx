@@ -20,6 +20,7 @@ import { accountToHoldings } from "@/lib/trading/holdings";
 import { sp500LessonSteps, sp500Quiz } from "@/lib/lesson-content";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { getGreetingParts, getGreetingPeriod } from "@/lib/home/greeting";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 function useJourneyCard(
   t: (key: string) => string,
@@ -84,6 +85,7 @@ function useJourneyCard(
 
 export default function HomePage() {
   const { t } = useTranslation();
+  useSetCompassContext({ type: "HOME" });
   const { status, data: session } = useSession();
   const { account } = usePaperAccount();
   const hasOpenSp500Position = account?.positions.some((p) => p.assetId === "sp500") ?? false;

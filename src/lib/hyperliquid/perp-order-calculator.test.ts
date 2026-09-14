@@ -8,6 +8,7 @@ import {
   maintenanceMarginRateFor,
   validatePerpOrderInput,
   TAKER_FEE_RATE,
+  MIN_NOTIONAL_VALUE_USD,
   type PerpOrderPreviewInput,
 } from "./perp-order-calculator";
 
@@ -149,6 +150,20 @@ describe("validatePerpOrderInput", () => {
     expect(validatePerpOrderInput({ ...BASE, entryPrice: null, marginUsdc: -5, leverage: 0 })).toBe(
       "price-unavailable"
     );
+  });
+
+  it("rejects a notional value (margin * leverage) below Hyperliquid's real minimum order value — a live, reported bug: a $4 margin / 1x order hung waiting on a doomed-to-fail signature+submission instead of being caught here first", () => {
+    expect(validatePerpOrderInput({ ...BASE, marginUsdc: 4, leverage: 1, availableBalance: 1000 })).toBe(
+      "below-minimum-notional"
+    );
+  });
+
+  it("allows a notional value exactly at the minimum", () => {
+    expect(validatePerpOrderInput({ ...BASE, marginUsdc: MIN_NOTIONAL_VALUE_USD, leverage: 1, availableBalance: 1000 })).toBeNull();
+  });
+
+  it("checks insufficient-balance before below-minimum-notional when both would fire", () => {
+    expect(validatePerpOrderInput({ ...BASE, marginUsdc: 5, leverage: 1, availableBalance: 4 })).toBe("insufficient-balance");
   });
 });
 

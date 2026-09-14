@@ -14,6 +14,7 @@ import { useTranslation } from "@/lib/i18n/locale-provider";
 import type { PerpOrderPreview } from "@/lib/hyperliquid/perp-order-calculator";
 import { checkPartialFill } from "@/lib/hyperliquid/hyperliquid-order-signer";
 import type { PerpOrderExecutionResult, PerpOrderExecutionStage } from "@/lib/hyperliquid/hyperliquid-order-signer";
+import { describeHyperliquidRejection } from "@/lib/hyperliquid/hyperliquid-rejection-messages";
 
 export type PerpOrderExecutionUiState =
   | { stage: "idle" }
@@ -211,11 +212,16 @@ export function ResultBanner({ result }: { result: PerpOrderExecutionResult }) {
       </div>
     );
   }
-  // "rejected" (our own pre-flight check) or "hyperliquid-rejected".
+  // "rejected" (our own pre-flight check) or "hyperliquid-rejected" — the
+  // latter carries Hyperliquid's own raw English API text, which is
+  // translated/clarified for the well-known cases this codebase actually
+  // recognizes (see describeHyperliquidRejection's own comment) and shown
+  // as-is otherwise, same as before.
+  const description = describeHyperliquidRejection(result.message);
   return (
     <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
       <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-      <span>{result.message}</span>
+      <span>{"translationKey" in description ? t(description.translationKey) : description.raw}</span>
     </div>
   );
 }

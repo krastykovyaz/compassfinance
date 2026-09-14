@@ -60,6 +60,12 @@ export class DeepSeekProvider implements AIProvider {
           temperature: request.temperature ?? 0.4,
           max_tokens: request.maxTokens ?? 700,
           ...(request.expectJson ? { response_format: { type: "json_object" } } : {}),
+          // Verified live against api.deepseek.com (September 2026):
+          // `{"thinking":{"type":"disabled"}}` fully suppresses
+          // `reasoning_tokens` (the field disappears from `usage`
+          // entirely) rather than merely reducing it — `reasoning_effort`
+          // is NOT honored by this API and was ruled out first.
+          ...(request.disableReasoning ? { thinking: { type: "disabled" } } : {}),
         }),
         signal: controller.signal,
       });

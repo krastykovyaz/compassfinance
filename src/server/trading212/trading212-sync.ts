@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/server/db/prisma";
+import { acquireSyncLock } from "@/server/brokerage/sync-lock";
 import { getDecryptedTrading212Credentials } from "@/server/repositories/trading212-repository";
 import { trading212Provider } from "./trading212-provider";
 import { mapTrading212TickerToAssetId } from "./trading212-asset-mapping";
@@ -68,36 +69,6 @@ export type Trading212SyncResult =
    * all, not even a failed one. */
   | { status: "already_syncing" };
 
-/** Atomic compare-and-swap lock acquire — Requirement 4. The WHERE clause
- * re-validates "not currently locked, or the lock is stale" as part of
- * the SAME atomic UPDATE the database executes, so two callers racing to
- * sync the same connection (cron overlap, manual click during a scheduled
- * run, two app instances) can never both see themselves as the winner:
- * exactly one UPDATE affects the row (count === 1), the other affects
- * none (count === 0). This works correctly regardless of how many
- * processes/instances are calling it, because the guarantee comes from
- * the database's own statement atomicity, not from anything held in this
- * process's memory. A SYNCING row whose syncStartedAt is older than the
- * stale-lock threshold is treated as abandoned (a crashed process) and
- * recoverable — otherwise one hard crash mid-sync would wedge that
- * connection out of automatic sync forever. */
-async function acquireSyncLock(connectionId: string): Promise<boolean> {
-  const now = new Date();
-  const staleBefore = new Date(now.getTime() - getTrading212StaleLockMs());
-  const result = await prisma.brokerageConnection.updateMany({
-    where: {
-      id: connectionId,
-      OR: [
-        { syncStatus: { not: "SYNCING" } },
-        { syncStatus: "SYNCING", syncStartedAt: null },
-        { syncStatus: "SYNCING", syncStartedAt: { lt: staleBefore } },
-      ],
-    },
-    data: { syncStatus: "SYNCING", syncStartedAt: now },
-  });
-  return result.count === 1;
-}
-
 function sanitizedInternalMessage(): string {
   // Never the raw caught error — an unexpected exception (a Prisma error,
   // a bug) could in principle stringify something not meant for a user or
@@ -128,7 +99,7 @@ export async function syncTrading212(userId: string): Promise<Trading212SyncResu
   });
   if (!credentials || !connection) return { status: "not_connected" };
 
-  if (!(await acquireSyncLock(connection.id))) {
+  if (!(await acquireSyncLock(connection.id, getTrading212StaleLockMs()))) {
     return { status: "already_syncing" };
   }
 

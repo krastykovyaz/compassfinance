@@ -4,7 +4,9 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Header } from "@/components/layout/header";
 import { WalletCard } from "@/components/profile/wallet-card";
 import { Trading212Card } from "@/components/profile/trading212-card";
+import { InteractiveBrokersCard } from "@/components/profile/interactive-brokers-card";
 import { useTranslation } from "@/lib/i18n/locale-provider";
+import { AskCompassButton } from "@/components/compass/ask-compass-button";
 
 // Moved out of the main Settings page — the wallet and Trading 212
 // connection cards used to render inline on Settings itself, but that
@@ -20,8 +22,18 @@ export default function ConnectedAccountsPage() {
     <AppShell>
       <Header title={t("linkRows.connectedAccounts")} backHref="/profile/settings" />
       <div className="space-y-5 px-5">
-        <WalletCard />
-        <Trading212Card />
+        <div className="space-y-2.5">
+          <WalletCard />
+          <AskCompassButton context={{ type: "HYPERLIQUID_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
+        </div>
+        <div className="space-y-2.5">
+          <Trading212Card />
+          <AskCompassButton context={{ type: "TRADING212_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
+        </div>
+        <div className="space-y-2.5">
+          <InteractiveBrokersCard />
+          <AskCompassButton context={{ type: "IBKR_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
+        </div>
       </div>
     </AppShell>
   );
