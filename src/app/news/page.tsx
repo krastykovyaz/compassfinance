@@ -13,6 +13,7 @@ import { NewsFilter } from "@/lib/mock-data";
 import { useProgress } from "@/lib/progress-store";
 import { sortNewsByInterest } from "@/lib/interests/interests";
 import { useTranslation } from "@/lib/i18n/locale-provider";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 const PAGE_SIZE = 3;
 
@@ -22,6 +23,9 @@ export default function NewsPage() {
   const { items, isLoading, error, degraded, refresh } = useNews();
   const { state } = useProgress();
   const { t } = useTranslation();
+  // No specific article selected yet — distinct from the article detail
+  // page's own NEWS·articleId context (see news/[id]/page.tsx).
+  useSetCompassContext({ type: "NEWS" });
 
   const newsFilters: { id: NewsFilter; label: string }[] = [
     { id: "all", label: t("news.filterAll") },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeItem } from "./trading212-activity-list";
-import type { NormalizedActivityItem } from "@/lib/trading212/activity-normalizer";
+import { describeItem } from "./activity-list";
+import type { NormalizedActivityItem } from "@/lib/portfolio/activity-normalizer";
 
 const t = (key: string) => {
   const labels: Record<string, string> = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { NormalizedActivityItem } from "@/lib/trading212/activity-normalizer";
+import type { NormalizedActivityItem } from "@/lib/portfolio/activity-normalizer";
 import type { Trading212ActivityKindFilter } from "@/server/repositories/trading212-activity-repository";
 
 export type Trading212ActivityState =

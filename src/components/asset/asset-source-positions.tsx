@@ -9,10 +9,12 @@ import { usePosition } from "@/lib/trading/paper-account-provider";
 import { useHyperliquidAccount, useHyperliquidDexAccount } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { getHyperliquidCoinForAsset, getHip3DexName } from "@/lib/hyperliquid/asset-mapping";
 import { useTrading212Portfolio } from "@/lib/trading212/use-trading212-portfolio";
+import { useInteractiveBrokersPortfolio } from "@/lib/interactive-brokers/use-interactive-brokers-portfolio";
 import {
   normalizePaperHolding,
   normalizeHyperliquidPosition,
   normalizeTrading212Position,
+  normalizeInteractiveBrokersPosition,
   type SourcedPosition,
 } from "@/lib/portfolio/portfolio-sources";
 
@@ -47,9 +49,18 @@ export function AssetSourcePositions({ assetId }: { assetId: AssetId }) {
     ? (trading212Portfolio.positions.find((p) => p.compassAssetId === assetId) ?? null)
     : null;
 
+  const interactiveBrokersState = useInteractiveBrokersPortfolio();
+  const interactiveBrokersPortfolio = interactiveBrokersState.stage === "loaded" ? interactiveBrokersState.portfolio : null;
+  const interactiveBrokersPosition = interactiveBrokersPortfolio
+    ? (interactiveBrokersPortfolio.positions.find((p) => p.compassAssetId === assetId) ?? null)
+    : null;
+
   const sources: SourcedPosition[] = [
     ...(trading212Position && trading212Portfolio
       ? [normalizeTrading212Position(trading212Position, trading212Portfolio.lastSyncAt)]
+      : []),
+    ...(interactiveBrokersPosition && interactiveBrokersPortfolio
+      ? [normalizeInteractiveBrokersPosition(interactiveBrokersPosition, interactiveBrokersPortfolio.lastSyncAt)]
       : []),
     ...(hyperliquidPosition ? [normalizeHyperliquidPosition(hyperliquidPosition)] : []),
     ...(paperPosition ? [normalizePaperHolding(paperPosition)] : []),
@@ -59,6 +70,7 @@ export function AssetSourcePositions({ assetId }: { assetId: AssetId }) {
 
   const SOURCE_LABEL: Record<SourcedPosition["source"], string> = {
     trading212: t("trading212.source"),
+    interactive_brokers: t("interactiveBrokers.source"),
     hyperliquid: t("portfolioSources.hyperliquidLabel"),
     paper: t("explore.paperTrading"),
   };
@@ -69,7 +81,9 @@ export function AssetSourcePositions({ assetId }: { assetId: AssetId }) {
       <div className="mt-2 divide-y divide-border">
         {sources.map((position) => {
           const formatValue = (value: number) =>
-            position.source === "trading212" ? formatTrading212Currency(value, position.currency) : formatCurrency(value);
+            position.source === "trading212" || position.source === "interactive_brokers"
+              ? formatTrading212Currency(value, position.currency)
+              : formatCurrency(value);
           return (
             <div key={position.source} className="py-2.5">
               <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">

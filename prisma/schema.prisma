@@ -73,6 +73,7 @@ model User {
   brokerageOrders       BrokerageOrder[]
   brokerageTransactions BrokerageTransaction[]
   brokerageActivities   BrokerageActivity[]
+  compassConversations  CompassConversation[]
 
   @@map("users")
 }
@@ -285,7 +286,15 @@ model BrokerageConnection {
   // connect time — confirms which real account these credentials belong
   // to, and lets a future re-validation detect if the credentials were
   // silently swapped for a different account without disconnecting first.
-  externalAccountId String
+  //
+  // Nullable as of the Interactive Brokers connection (Phase 1): IBKR's
+  // OAuth 1.0a third-party workflow never calls /portfolio/accounts (that
+  // would be portfolio sync, explicitly out of scope for Phase 1 — see
+  // docs/integrations/interactive-brokers-phase-0.md), so an IBKR
+  // connection has no real account id to store yet at connect time.
+  // Trading 212 rows still always populate this (connectTrading212 never
+  // upserts without it).
+  externalAccountId String?
 
   status          BrokerageConnectionStatus @default(DISCONNECTED)
   createdAt       DateTime                  @default(now())
@@ -317,6 +326,19 @@ model BrokerageConnection {
   // genuinely different facts Requirement 6/13 ask for.
   syncStartedAt    DateTime?
   lastFailedSyncAt DateTime?
+
+  // Phase 3 (Interactive Brokers) — a SEPARATE cooldown clock from
+  // lastSyncAt, needed because IBKR's one viable read-only activity/
+  // transaction endpoint (POST /pa/transactions) is rate-limited by IBKR
+  // itself to 1 request per 15 minutes GLOBALLY (confirmed against two
+  // official IBKR pacing-limitation pages) — far stricter than the
+  // account/positions sync this connection already runs on every manual
+  // "Sync" click. lastSyncAt can't be reused for this: a user clicking
+  // Sync twice within 15 minutes must still refresh account/positions
+  // every time, while the activity step specifically must skip (not
+  // fail) until this cooldown has elapsed. Always null for Trading 212
+  // and Hyperliquid, which have no equivalent restriction.
+  lastActivitySyncAt DateTime?
 
   user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   account      BrokerageAccount?
@@ -393,13 +415,18 @@ model BrokerageAccount {
 // One row per currently-open position — see the section header comment
 // for why this is current-state (replaced each sync), not history.
 // `externalId` is Trading 212's own ticker (e.g. "AAPL_US_EQ") since a
-// position has no separate numeric id of its own in their API.
+// position has no separate numeric id of its own in their API. For
+// Interactive Brokers (Phase 2), `externalId` is instead IBKR's own
+// `conid` (stringified) — a stable contract identifier IBKR itself
+// documents as the correct thing to key a position on, never the ticker
+// (a ticker can be ambiguous across asset classes/exchanges; a conid
+// never is) — see interactive-brokers-asset-mapping.ts.
 model BrokeragePosition {
   id                    String @id @default(cuid())
   userId                String
   brokerageConnectionId String
   provider              String
-  externalId            String // Trading 212's own ticker, e.g. "AAPL_US_EQ"
+  externalId            String // Trading 212: ticker, e.g. "AAPL_US_EQ". IBKR: stringified conid.
 
   // The CompassFinance asset this instrument was confidently mapped to
   // (see asset-mapping.ts) — null when unmapped, per Requirement 6
@@ -415,6 +442,21 @@ model BrokeragePosition {
   averagePrice  Float?
   currentPrice  Float?
   unrealizedPnl Float?
+
+  // Phase 2 (Interactive Brokers) — provider-neutral additions, always
+  // null for Trading 212 (whose /equity/portfolio never reports any of
+  // these). Populated from IBKR's /portfolio2/{accountId}/positions
+  // response: realizedPnl, assetClass ("STK"/"OPT"/"FUT"/...), sector,
+  // and the derivatives-only fields (expiry/strike/multiplier/
+  // underlyingConid), left null for non-derivative instruments exactly
+  // as IBKR itself leaves them absent/null.
+  realizedPnl     Float?
+  assetClass      String?
+  sector          String?
+  expiry          String?
+  strike          Float?
+  multiplier      Float?
+  underlyingConid String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -776,4 +818,65 @@ model UserLearningStats {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_learning_stats")
+}
+
+// ---------------------------------------------------------------------------
+// Compass Agent (Phase 4) — read-only financial intelligence/education chat.
+// A genuinely new feature domain with no existing model to reuse (unlike the
+// Interactive Brokers phases, where reuse was the explicit mandate) — see
+// docs/compass-agent.md for the full architecture. Never stores broker API
+// keys, OAuth secrets, private keys, or signing material — messages only
+// ever carry the assistant's own generated text/structured blocks and the
+// user's own free-text question, never a credential of any kind.
+// ---------------------------------------------------------------------------
+
+model CompassConversation {
+  id String @id @default(cuid())
+
+  userId String
+
+  // The context the conversation STARTED in (e.g. "PORTFOLIO", "ASSET") —
+  // a conversation can receive follow-ups that reference other things
+  // (Section 7's own "what about NVIDIA?" example), but its row-level
+  // context is fixed at creation, matching how a real chat thread is tied
+  // to where it was opened. `contextKey` is a single opaque string
+  // sufficient to reconstruct the specific scope (a portfolio source, an
+  // assetId, an articleId, a lessonId) — see lib/compass/context.ts's
+  // own serialize/parse pair, the ONE place this encoding is defined.
+  contextType String
+  contextKey  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages CompassMessage[]
+
+  @@index([userId])
+  @@map("compass_conversations")
+}
+
+model CompassMessage {
+  id             String @id @default(cuid())
+  conversationId String
+
+  role String // "user" | "assistant" — never "system": the system prompt is server-authored per-request, never persisted per message
+
+  // Plain-text content — always present, even for an assistant message
+  // that also carries structuredData, so a client that doesn't render
+  // structured blocks still has something sensible to show.
+  content String
+
+  // JSON-encoded array of structured blocks (see lib/compass/schemas.ts's
+  // CompassStructuredBlock union) — null for a plain-text message (every
+  // user message, and any assistant message that didn't produce
+  // structured output).
+  structuredData String?
+
+  createdAt DateTime @default(now())
+
+  conversation CompassConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("compass_messages")
 }

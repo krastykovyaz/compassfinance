@@ -67,6 +67,8 @@ function validationMessageKey(error: PerpOrderValidationError): string {
       return "perpTrade.insufficientBalance";
     case "price-unavailable":
       return "perpTrade.priceUnavailable";
+    case "below-minimum-notional":
+      return "perpTrade.belowMinimumNotional";
   }
 }
 

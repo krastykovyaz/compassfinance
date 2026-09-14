@@ -12,6 +12,7 @@ import { PaperAccountProvider } from "@/lib/trading/paper-account-provider";
 import { HyperliquidAccountProvider } from "@/lib/hyperliquid/hyperliquid-account-provider";
 import { HyperliquidAgentProvider } from "@/lib/hyperliquid/hyperliquid-agent-provider";
 import { ChunkReloadGuard } from "@/components/chunk-reload-guard";
+import { CompassProvider } from "@/lib/compass/compass-provider";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://compassfinance.online"),
@@ -61,7 +62,9 @@ export default function RootLayout({
                         <PaperAccountProvider>
                           <HyperliquidAccountProvider>
                             <HyperliquidAgentProvider>
-                              <ProgressProvider>{children}</ProgressProvider>
+                              <ProgressProvider>
+                                <CompassProvider>{children}</CompassProvider>
+                              </ProgressProvider>
                             </HyperliquidAgentProvider>
                           </HyperliquidAccountProvider>
                         </PaperAccountProvider>

@@ -3,10 +3,34 @@ import {
   normalizeTrading212Position,
   normalizePaperHolding,
   normalizeHyperliquidPosition,
+  normalizeInteractiveBrokersPosition,
 } from "./portfolio-sources";
 import type { Trading212PositionDTO } from "@/server/repositories/trading212-portfolio-repository";
+import type { InteractiveBrokersPositionDTO } from "@/server/repositories/interactive-brokers-portfolio-repository";
 import type { PaperPositionView } from "@/lib/trading/types";
 import type { HyperliquidPosition } from "@/lib/hyperliquid/hyperliquid-types";
+
+function interactiveBrokersPosition(overrides: Partial<InteractiveBrokersPositionDTO> = {}): InteractiveBrokersPositionDTO {
+  return {
+    compassAssetId: null,
+    externalId: "9408",
+    externalTicker: "MCD",
+    externalName: null,
+    currencyCode: "USD",
+    quantity: 12,
+    averagePrice: 266.2,
+    currentPrice: null,
+    unrealizedPnl: null,
+    realizedPnl: null,
+    assetClass: "STK",
+    sector: null,
+    expiry: null,
+    strike: null,
+    multiplier: null,
+    underlyingConid: null,
+    ...overrides,
+  };
+}
 
 function trading212Position(overrides: Partial<Trading212PositionDTO> = {}): Trading212PositionDTO {
   return {
@@ -139,6 +163,49 @@ describe("normalizePaperHolding", () => {
 
     expect(result.marketValue).toBe(362.84);
     expect(result.unrealizedPnl).toBe(62.84);
+  });
+});
+
+describe("normalizeInteractiveBrokersPosition", () => {
+  it("uses the mapped CompassFinance asset name when mapped", () => {
+    const result = normalizeInteractiveBrokersPosition(
+      interactiveBrokersPosition({ compassAssetId: "aapl", externalTicker: "AAPL" }),
+      "2026-09-08T00:00:00.000Z"
+    );
+    expect(result.displayName).toBe("Apple Inc.");
+    expect(result.source).toBe("interactive_brokers");
+    expect(result.compassAssetId).toBe("aapl");
+    expect(result.lastSyncAt).toBe("2026-09-08T00:00:00.000Z");
+  });
+
+  it("falls back to the raw provider label when unmapped — never guesses a name", () => {
+    const result = normalizeInteractiveBrokersPosition(interactiveBrokersPosition({ compassAssetId: null, externalTicker: "MCD" }), null);
+    expect(result.displayName).toBe("MCD");
+    expect(result.compassAssetId).toBeNull();
+  });
+
+  it("computes marketValue from currentPrice × quantity only when currentPrice is available", () => {
+    const withPrice = normalizeInteractiveBrokersPosition(interactiveBrokersPosition({ currentPrice: 258.83, quantity: 12 }), null);
+    expect(withPrice.marketValue).toBeCloseTo(3105.96);
+
+    const withoutPrice = normalizeInteractiveBrokersPosition(interactiveBrokersPosition({ currentPrice: null }), null);
+    expect(withoutPrice.marketValue).toBeNull();
+  });
+
+  it("always uses IBKR's own reported unrealizedPnl directly — never recomputes one", () => {
+    const result = normalizeInteractiveBrokersPosition(
+      interactiveBrokersPosition({ unrealizedPnl: 88.55, currentPrice: 258.83, averagePrice: 266.2, quantity: 12 }),
+      null
+    );
+    expect(result.unrealizedPnl).toBe(88.55);
+  });
+
+  it("passes through null unrealizedPnl as null, never fabricating a formula-derived value", () => {
+    const result = normalizeInteractiveBrokersPosition(
+      interactiveBrokersPosition({ unrealizedPnl: null, currentPrice: 258.83, averagePrice: 266.2 }),
+      null
+    );
+    expect(result.unrealizedPnl).toBeNull();
   });
 });
 

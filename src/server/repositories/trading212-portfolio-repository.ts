@@ -72,7 +72,11 @@ export async function getTrading212Portfolio(userId: string): Promise<Trading212
   ]);
 
   return {
-    accountId: connection.externalAccountId,
+    // Trading 212 rows always populate this at connect time
+    // (connectTrading212 never upserts without it) — only becomes
+    // nullable in the schema for a different provider (Interactive
+    // Brokers, whose Phase 1 connection has no account id yet).
+    accountId: connection.externalAccountId!,
     lastSyncAt: connection.lastSyncAt ? connection.lastSyncAt.toISOString() : null,
     syncStatus: connection.syncStatus as Trading212SyncStatusDTO,
     syncError: connection.syncError,

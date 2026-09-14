@@ -12,6 +12,7 @@ import { AccountCard } from "@/components/profile/account-card";
 import { useProgress } from "@/lib/progress-store";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { INTEREST_CATEGORIES } from "@/lib/interests/interests";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 // Milestone 9: "Themes" (Explore) and "Investor Interests" (Profile) were
 // the same concept shown two different ways. This card is now the single
@@ -23,6 +24,7 @@ import { INTEREST_CATEGORIES } from "@/lib/interests/interests";
 export default function ProfilePage() {
   const { state, learningProgress } = useProgress();
   const { t } = useTranslation();
+  useSetCompassContext({ type: "PROFILE" });
 
   const followedInterests = INTEREST_CATEGORIES.filter((c) => state.interests.includes(c.id));
 

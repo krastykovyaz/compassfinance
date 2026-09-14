@@ -5,7 +5,7 @@ import {
   normalizeDividendRow,
   normalizeTransactionRow,
   type NormalizedActivityItem,
-} from "@/lib/trading212/activity-normalizer";
+} from "@/lib/portfolio/activity-normalizer";
 
 const PROVIDER = "trading212";
 const DEFAULT_LIMIT = 20;
@@ -87,7 +87,7 @@ export async function getTrading212Activity(
     const hasMore = rows.length > limit;
     const page = rows.slice(0, limit);
     const wantKind = kind === "orders" ? "order" : "execution";
-    const items = page.flatMap((row) => normalizeOrderRow(toOrderInput(row)).filter((item) => item.kind === wantKind));
+    const items = page.flatMap((row) => normalizeOrderRow(toOrderInput(row), "trading212").filter((item) => item.kind === wantKind));
     const nextCursor = hasMore && page.length > 0 ? encodeCursor(page[page.length - 1].externalCreatedAt.toISOString()) : null;
     return { items, nextCursor };
   }
@@ -147,7 +147,7 @@ export async function getTrading212Activity(
     orderRows.length > limit || dividendRows.length > limit || transactionRows.length > limit;
 
   const candidates: NormalizedActivityItem[] = [
-    ...orderRows.slice(0, limit).flatMap((row) => normalizeOrderRow(toOrderInput(row))),
+    ...orderRows.slice(0, limit).flatMap((row) => normalizeOrderRow(toOrderInput(row), "trading212")),
     ...dividendRows.slice(0, limit).map((row) => normalizeDividendRow(toDividendInput(row))),
     ...transactionRows.slice(0, limit).map((row) => normalizeTransactionRow(toTransactionInput(row))),
   ];

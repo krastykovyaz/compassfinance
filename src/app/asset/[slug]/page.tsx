@@ -24,9 +24,12 @@ import { priceFromQuoteResult } from "@/lib/market/quote-to-trade";
 import { usePaperAccount, usePosition } from "@/lib/trading/paper-account-provider";
 import { useAchievementShare } from "@/lib/share/use-achievement-share";
 import { useTrading212Activity } from "@/lib/trading212/use-trading212-activity";
-import { Trading212ActivityList } from "@/components/portfolio/trading212-activity-list";
+import { useInteractiveBrokersActivity } from "@/lib/interactive-brokers/use-interactive-brokers-activity";
+import type { InteractiveBrokersActivityKindFilter } from "@/server/repositories/interactive-brokers-activity-repository";
+import { ActivityList } from "@/components/portfolio/activity-list";
 import { Trading212ActivityFilterBar, type Trading212ActivityFilter } from "@/components/portfolio/trading212-activity-filter-bar";
 import { AssetSourcePositions } from "@/components/asset/asset-source-positions";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 export default function AssetDetailPage({
   params,
@@ -61,6 +64,15 @@ export default function AssetDetailPage({
   const hasAnyTrading212Activity =
     trading212AnyActivity.stage === "loaded" && trading212AnyActivity.items.length > 0;
 
+  // Same reasoning, for Interactive Brokers' own activity (Phase 3) — a
+  // fully separate section/query, never merged into Trading 212's (a
+  // held asset could show real history from both sources at once).
+  const [ibkrActivityFilter, setIbkrActivityFilter] = useState<InteractiveBrokersActivityKindFilter>("all");
+  const interactiveBrokersActivity = useInteractiveBrokersActivity({ assetId: slug, kind: ibkrActivityFilter, limit: 20 });
+  const interactiveBrokersAnyActivity = useInteractiveBrokersActivity({ assetId: slug, limit: 1 });
+  const hasAnyInteractiveBrokersActivity =
+    interactiveBrokersAnyActivity.stage === "loaded" && interactiveBrokersAnyActivity.items.length > 0;
+
   // Tracks "assets explored" for the learning-progress model. Deferred via
   // setTimeout so this doesn't fire as a synchronous setState call from
   // within the effect body (see recordAssetView in progress-store.tsx).
@@ -71,6 +83,8 @@ export default function AssetDetailPage({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  useSetCompassContext({ type: "ASSET", assetId: slug });
 
   const asset = getAsset(slug);
 
@@ -190,7 +204,14 @@ export default function AssetDetailPage({
                 <p className="mt-1 text-[13px] font-medium text-ink">
                   {t("market.completeFirst")}: {blockingStage.name}
                 </p>
-                <p className="mt-1 text-[13px] text-ink-muted">{unlockDescriptionFor(blockingStage.assetId)}</p>
+                {/* This asset's OWN unlock description ("Complete Tesla to
+                 * unlock NVIDIA"), not blockingStage's — a real reported
+                 * bug: calling this with blockingStage.assetId (Tesla)
+                 * showed Tesla's own prerequisite ("Complete Apple to
+                 * unlock Tesla") while the heading above already named
+                 * Tesla as what to complete, describing an unrelated,
+                 * one-level-removed unlock instead of this page's own. */}
+                <p className="mt-1 text-[13px] text-ink-muted">{unlockDescriptionFor(asset.id)}</p>
               </>
             ) : (
               <p className="mt-1 text-[13px] text-ink-muted">
@@ -274,7 +295,7 @@ export default function AssetDetailPage({
               <p className="py-4 text-center text-[13px] text-negative">{t("trading212.activityLoadError")}</p>
             ) : (
               <>
-                <Trading212ActivityList items={trading212Activity.items} />
+                <ActivityList items={trading212Activity.items} sourceLabel={t("trading212.source")} emptyLabel={t("trading212.noActivity")} />
                 {trading212Activity.nextCursor ? (
                   <button
                     onClick={() => void trading212Activity.loadMore()}
@@ -283,6 +304,40 @@ export default function AssetDetailPage({
                   >
                     {trading212Activity.loadingMore ? <Loader2 size={13} className="animate-spin" /> : null}
                     {trading212Activity.loadingMore ? t("trading212.loadingMore") : t("trading212.loadMore")}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </Card>
+        ) : null}
+
+        {hasAnyInteractiveBrokersActivity ? (
+          <Card>
+            <h2 className="text-[15px] font-semibold text-ink">{t("interactiveBrokers.yourHistoryForThisAsset")}</h2>
+            <div className="mt-2">
+              <Trading212ActivityFilterBar value={ibkrActivityFilter} onChange={setIbkrActivityFilter} includeAccountLevel={false} />
+            </div>
+            {interactiveBrokersActivity.stage === "loading" ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 size={18} className="animate-spin text-ink-faint" />
+              </div>
+            ) : interactiveBrokersActivity.stage === "error" ? (
+              <p className="py-4 text-center text-[13px] text-negative">{t("interactiveBrokers.activityLoadError")}</p>
+            ) : (
+              <>
+                <ActivityList
+                  items={interactiveBrokersActivity.items}
+                  sourceLabel={t("interactiveBrokers.source")}
+                  emptyLabel={t("interactiveBrokers.noActivity")}
+                />
+                {interactiveBrokersActivity.nextCursor ? (
+                  <button
+                    onClick={() => void interactiveBrokersActivity.loadMore()}
+                    disabled={interactiveBrokersActivity.loadingMore}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-border py-2 text-[13px] font-medium text-ink hover:bg-surface-2 disabled:opacity-60"
+                  >
+                    {interactiveBrokersActivity.loadingMore ? <Loader2 size={13} className="animate-spin" /> : null}
+                    {interactiveBrokersActivity.loadingMore ? t("trading212.loadingMore") : t("trading212.loadMore")}
                   </button>
                 ) : null}
               </>
