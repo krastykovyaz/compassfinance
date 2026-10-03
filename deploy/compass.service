@@ -1,0 +1,53 @@
+# CompassFinance, standalone runtime.
+#
+# Install or update (scripts/deploy.sh handles releases; this file only
+# changes when the unit itself changes):
+#   cp deploy/compass.service /etc/systemd/system/compass.service
+#   systemctl daemon-reload && systemctl restart compass.service
+#
+# Rollback to the old `next start` setup (works only while the old
+# node_modules and .next still exist in the project folder):
+#   cp /root/compassfinance-runtime/compass.service.pre-standalone /etc/systemd/system/compass.service
+#   systemctl daemon-reload && systemctl restart compass.service
+#
+# What matters here, and why:
+#   * ExecStart runs the standalone server.js from the `current` release
+#     symlink instead of `next start` from the project folder.
+#   * DATABASE_URL is absolute and is set by `env` INSIDE ExecStart, not
+#     with Environment=. The standalone server.js calls process.chdir() into
+#     its own release folder and the app's default "file:./dev.db" is
+#     relative, so a relative value makes the app silently create and use a
+#     new, empty database inside the release. systemd lets EnvironmentFile
+#     override Environment=, and the README suggests putting
+#     DATABASE_URL="file:./dev.db" in the env file; setting it in the command
+#     itself is the one place .env.local cannot override.
+#   * HOSTNAME=127.0.0.1 is set the same way. The server must be reachable
+#     only through nginx (which proxies to 127.0.0.1:3002). Bound to all
+#     interfaces, as it used to be, it also answered plain HTTP on the public
+#     address, where a caller can skip TLS and anything nginx enforces, and
+#     send any X-Real-IP / X-Forwarded-For it likes (the app's rate limiter
+#     trusts those headers because only nginx is supposed to set them).
+#   * ExecStartPre refuses to start if the live database file is missing:
+#     SQLite creates a missing file instead of failing.
+#   * .env.local is still read from the project folder, so secrets and
+#     NEXT_PUBLIC_* values come from the same single file as before.
+
+[Unit]
+Description=CompassFinance (Next.js standalone) app
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/compassfinance-runtime/current
+Environment=NODE_ENV=production
+Environment=PORT=3002
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=/root/compassfinance/.env.local
+ExecStartPre=/usr/bin/test -s /root/compassfinance/dev.db
+ExecStart=/usr/bin/env HOSTNAME=127.0.0.1 DATABASE_URL=file:/root/compassfinance/dev.db /opt/node-v22.23.2-linux-x64/bin/node /root/compassfinance-runtime/current/server.js
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
