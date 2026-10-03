@@ -1,0 +1,48 @@
+# CompassFinance, standalone runtime.
+#
+# Install (first cutover only; scripts/deploy.sh does every later deploy):
+#   cp /etc/systemd/system/compass.service /root/compassfinance-runtime/compass.service.pre-standalone   # rollback copy
+#   cp deploy/compass.service /etc/systemd/system/compass.service
+#   systemctl daemon-reload
+#   scripts/deploy.sh --switch
+#
+# Rollback to the old `next start` setup:
+#   cp /root/compassfinance-runtime/compass.service.pre-standalone /etc/systemd/system/compass.service
+#   systemctl daemon-reload && systemctl restart compass.service
+#
+# Differences from the previous unit, and why:
+#   * ExecStart runs the standalone server.js from the `current` release
+#     symlink instead of `next start` from the project folder.
+#   * DATABASE_URL is absolute. The standalone server.js calls
+#     process.chdir() into its own release folder, and the app's default
+#     "file:./dev.db" is relative, so without this the app would silently
+#     create and use a new, empty database inside the release.
+#   * ExecStartPre refuses to start if the live database file is missing,
+#     for the same reason: SQLite creates a missing file instead of failing.
+#   * .env.local is still read from the project folder, so secrets and
+#     NEXT_PUBLIC_* values come from the same single file as before.
+#
+# Deliberately NOT changed: the listen address (HOSTNAME is unset, so it
+# still binds all interfaces on 3002, exactly as `next start -p 3002` did)
+# and Restart=on-failure.
+
+[Unit]
+Description=CompassFinance (Next.js standalone) app
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/compassfinance-runtime/current
+Environment=NODE_ENV=production
+Environment=PORT=3002
+Environment=DATABASE_URL=file:/root/compassfinance/dev.db
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=/root/compassfinance/.env.local
+ExecStartPre=/usr/bin/test -s /root/compassfinance/dev.db
+ExecStart=/opt/node-v22.23.2-linux-x64/bin/node /root/compassfinance-runtime/current/server.js
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
