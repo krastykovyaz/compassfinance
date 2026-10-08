@@ -32,16 +32,19 @@ bad()  { fail=$((fail + 1)); printf '  FAIL  %s\n' "$1"; }
 status_of() { curl -s -o /dev/null -m 40 -w '%{http_code}' "${HDRS[@]}" "$1"; }
 ctype_of()  { curl -s -o /dev/null -m 40 -w '%{content_type}' "${HDRS[@]}" "$1"; }
 
-# page <path> <expected-status> [expected-content-type-prefix]
+# page <path> <expected-status> [expected-content-type-prefix] [noref]
+# `noref` skips the comparison with the live service. Built asset file names
+# carry a content hash that changes with every build, so the new release's
+# own asset URLs legitimately do not exist on the old live service.
 page() {
-  local path="$1" want="$2" ctype_want="${3:-}" got
+  local path="$1" want="$2" ctype_want="${3:-}" noref="${4:-}" got
   got=$(status_of "${BASE}${path}")
   if [ "$got" != "$want" ]; then bad "${path}: status ${got}, expected ${want}"; return; fi
   if [ -n "$ctype_want" ]; then
     local ct; ct=$(ctype_of "${BASE}${path}")
     case "$ct" in "$ctype_want"*) ;; *) bad "${path}: content-type '${ct}', expected '${ctype_want}*'"; return ;; esac
   fi
-  if [ -n "$REF" ]; then
+  if [ -n "$REF" ] && [ -z "$noref" ]; then
     local ref_got; ref_got=$(status_of "${REF}${path}")
     if [ "$ref_got" != "$got" ]; then bad "${path}: new=${got} but live=${ref_got}"; return; fi
     ok "${path} -> ${got} (matches live)"
@@ -74,9 +77,9 @@ page "/share/achievement/smoke-test-token/opengraph-image" 200 "image/png"
 echo "[static assets]"
 html=$(curl -s -m 40 "${HDRS[@]}" "${BASE}/")
 chunk=$(printf '%s' "$html" | grep -o '/_next/static/[^"]*\.js' | head -1)
-if [ -z "$chunk" ]; then bad "no /_next/static chunk referenced by the home page"; else page "$chunk" 200 "application/javascript"; fi
+if [ -z "$chunk" ]; then bad "no /_next/static chunk referenced by the home page"; else page "$chunk" 200 "application/javascript" noref; fi
 css=$(printf '%s' "$html" | grep -o '/_next/static/[^"]*\.css' | head -1)
-if [ -z "$css" ]; then bad "no /_next/static css referenced by the home page"; else page "$css" 200 "text/css"; fi
+if [ -z "$css" ]; then bad "no /_next/static css referenced by the home page"; else page "$css" 200 "text/css" noref; fi
 
 echo "[auth]"
 page "/api/auth/providers" 200 "application/json"
