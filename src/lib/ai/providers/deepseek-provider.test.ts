@@ -49,16 +49,29 @@ describe("DeepSeekProvider — disableReasoning", () => {
     expect(requestBody(fetchMock).thinking).toEqual({ type: "disabled" });
   });
 
-  it("omits the thinking field entirely when disableReasoning is not set (preserves default behavior for existing callers like the AI Tutor)", async () => {
+  it("sends thinking: { type: 'disabled' } by default when expectJson is true and disableReasoning is not set", async () => {
+    // Every current JSON-mode caller (Compass, the AI Tutor, the news
+    // translator) wants a deterministic structured response — reasoning
+    // pass consuming the shared maxTokens budget is never desirable there,
+    // so this is the default rather than an opt-in each caller repeats.
     const fetchMock = mockFetchOk('{"text":"ok"}');
     const provider = new DeepSeekProvider();
 
     await provider.complete({ systemPrompt: "sys", userPrompt: "usr", expectJson: true });
 
+    expect(requestBody(fetchMock).thinking).toEqual({ type: "disabled" });
+  });
+
+  it("omits the thinking field when expectJson is false and disableReasoning is not set (a plain-text completion)", async () => {
+    const fetchMock = mockFetchOk("ok");
+    const provider = new DeepSeekProvider();
+
+    await provider.complete({ systemPrompt: "sys", userPrompt: "usr", expectJson: false });
+
     expect(requestBody(fetchMock)).not.toHaveProperty("thinking");
   });
 
-  it("omits the thinking field when disableReasoning is explicitly false", async () => {
+  it("omits the thinking field when disableReasoning is explicitly false, even with expectJson true", async () => {
     const fetchMock = mockFetchOk('{"text":"ok"}');
     const provider = new DeepSeekProvider();
 

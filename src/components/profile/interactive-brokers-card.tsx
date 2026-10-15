@@ -20,6 +20,7 @@ import { Landmark, Loader2, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useTranslation } from "@/lib/i18n/locale-provider";
 import { useInteractiveBrokersConnection } from "@/lib/interactive-brokers/use-interactive-brokers-connection";
+import { InteractiveBrokersFlexConnectModal } from "@/components/profile/interactive-brokers-flex-connect-modal";
 
 type OAuthBanner = { kind: "connected" } | { kind: "error"; reason: string };
 
@@ -67,6 +68,7 @@ export function InteractiveBrokersCard() {
   const banner = useOAuthCallbackBanner(load);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [flexOpen, setFlexOpen] = useState(false);
 
   async function handleDisconnect() {
     setDisconnecting(true);
@@ -89,7 +91,7 @@ export function InteractiveBrokersCard() {
       {banner?.kind === "error" ? (
         <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-negative-bg px-3 py-2 text-xs text-negative">
           <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-          <span>{t("interactiveBrokers.connectErrorGeneric")}</span>
+          <span>{banner.reason === "not_configured" ? t("interactiveBrokers.connectErrorNotAvailable") : t("interactiveBrokers.connectErrorGeneric")}</span>
         </div>
       ) : null}
 
@@ -119,6 +121,10 @@ export function InteractiveBrokersCard() {
               </p>
             </div>
           </div>
+
+          {state.stage === "loaded" && state.connection?.method === "flex" ? (
+            <p className="mt-2 text-[12px] leading-snug text-ink-faint">{t("interactiveBrokers.flexConnectedNote")}</p>
+          ) : null}
 
           {confirmingDisconnect ? (
             <div className="mt-3 rounded-xl bg-negative-bg px-3 py-2.5 text-xs text-negative">
@@ -164,14 +170,31 @@ export function InteractiveBrokersCard() {
             <p className="text-[14px] font-medium text-ink">{t("interactiveBrokers.notConnected")}</p>
             <p className="text-xs text-ink-muted">{t("interactiveBrokers.connectDescription")}</p>
           </div>
-          <a
-            href="/api/user/interactive-brokers/oauth/start"
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-surface active:opacity-90"
-          >
-            {t("interactiveBrokers.connectButton")}
-          </a>
+          {state.oauthAvailable ? (
+            <a
+              href="/api/user/interactive-brokers/oauth/start"
+              className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-surface active:opacity-90"
+            >
+              {t("interactiveBrokers.connectButton")}
+            </a>
+          ) : (
+            <button
+              onClick={() => setFlexOpen(true)}
+              className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-surface active:opacity-90"
+            >
+              {t("interactiveBrokers.connectButton")}
+            </button>
+          )}
         </div>
       )}
+
+      {state.stage === "loaded" && !isConnected && state.oauthAvailable ? (
+        <button onClick={() => setFlexOpen(true)} className="mt-3 w-full py-1 text-center text-[12px] font-medium text-blue">
+          {t("interactiveBrokers.flexConnectButton")}
+        </button>
+      ) : null}
+
+      <InteractiveBrokersFlexConnectModal open={flexOpen} onClose={() => setFlexOpen(false)} onConnected={load} />
     </Card>
   );
 }

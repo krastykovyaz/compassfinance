@@ -65,7 +65,16 @@ export class DeepSeekProvider implements AIProvider {
           // `reasoning_tokens` (the field disappears from `usage`
           // entirely) rather than merely reducing it — `reasoning_effort`
           // is NOT honored by this API and was ruled out first.
-          ...(request.disableReasoning ? { thinking: { type: "disabled" } } : {}),
+          //
+          // Defaults to true whenever expectJson is set: every current
+          // JSON-mode caller (Compass, the AI Tutor, the news translator)
+          // wants a deterministic structured response, not open-ended
+          // deliberation, and reasoning_tokens competes with the visible
+          // output for the SAME maxTokens budget — without this, DeepSeek
+          // can spend the entire budget "thinking" and return nothing
+          // parseable. A caller that genuinely wants JSON mode WITH
+          // reasoning can still opt back in with `disableReasoning: false`.
+          ...((request.disableReasoning ?? request.expectJson) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal: controller.signal,
       });

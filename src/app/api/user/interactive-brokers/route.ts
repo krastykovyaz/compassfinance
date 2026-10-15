@@ -1,5 +1,6 @@
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
+import { getInteractiveBrokersConfig } from "@/server/interactive-brokers/interactive-brokers-config";
 import {
   disconnectInteractiveBrokers,
   getInteractiveBrokersConnection,
@@ -16,7 +17,14 @@ import {
 export async function GET() {
   return withApiErrorHandling(async () => {
     const userId = await requireUserId();
-    return { connection: await getInteractiveBrokersConnection(userId) };
+    return {
+      connection: await getInteractiveBrokersConnection(userId),
+      // Whether the vendor OAuth sign-in can work on this server at all. It
+      // cannot until Interactive Brokers has approved CompassFinance and the
+      // IBKR_* settings exist; the screens then offer the Flex report
+      // connection instead of a button that always fails.
+      oauthAvailable: getInteractiveBrokersConfig() !== null,
+    };
   });
 }
 

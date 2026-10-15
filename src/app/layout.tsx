@@ -30,7 +30,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased">
         <ChunkReloadGuard />
-        {/* This wrapper and the "phone" div below it both use min-h-dvh —
+        {/* This wrapper uses min-h-dvh and the "phone" div below it uses min-h-app (the window on a phone, a fixed height on desktop) —
             on real mobile Safari the two can briefly disagree by a few px
             while the address bar collapses/expands, exposing a sliver of
             this wrapper's background at the bottom edge. The grey
@@ -51,7 +51,7 @@ export default function RootLayout({
               descendants — scoped to md: only, since below that
               breakpoint there's no frame and `fixed` should anchor to the
               real device viewport as normal. */}
-          <div className="mx-auto min-h-dvh w-full bg-canvas md:min-h-[860px] md:w-[420px] md:overflow-hidden md:rounded-[40px] md:border md:border-border md:shadow-2xl md:shadow-black/10 md:[contain:layout]">
+          <div className="mx-auto min-h-app w-full bg-canvas md:w-[420px] md:overflow-hidden md:rounded-[40px] md:border md:border-border md:shadow-2xl md:shadow-black/10 md:[contain:layout]">
             <AuthSessionProvider>
               <LocaleProvider>
                 <NavigationHistoryProvider>

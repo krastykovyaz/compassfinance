@@ -60,6 +60,18 @@
     monospace;
 }
 
+/* Height of one app screen. On a phone it is the window. On desktop (md and
+ * up) the app is drawn as a fixed 420px-wide "phone" frame (see app/layout),
+ * and its height must NOT follow the window: browser zoom changes the window's
+ * height in page units, so a window-tall frame turned into a long thin strip
+ * when zoomed out. A fixed height keeps the frame the same shape at any zoom. */
+@utility min-h-app {
+  min-height: 100dvh;
+  @media (min-width: 48rem) {
+    min-height: 860px;
+  }
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
 }
@@ -93,5 +105,23 @@ html {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Floating hint bubble (components/tips/screen-tips.tsx): rises in gently. */
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[tip-in"] {
+    animation: none;
   }
 }

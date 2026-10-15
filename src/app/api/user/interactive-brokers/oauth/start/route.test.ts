@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const requireUserId = vi.fn();
@@ -32,6 +32,40 @@ beforeEach(() => {
   requireUserId.mockResolvedValue("user-1");
   encodeOAuthState.mockReturnValue("signed-state-cookie-value");
   getInteractiveBrokersAuthorizeUrl.mockReturnValue("https://interactivebrokers.com/authorize?oauth_token=req-tok");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("GET /api/user/interactive-brokers/oauth/start — redirects stay on the public site", () => {
+  // A real reported bug: behind nginx the request's own URL carries the
+  // server's listening address, so every redirect sent the user's browser to
+  // https://localhost:3002/... where nothing was reachable.
+  function requestAsSeenBehindProxy() {
+    return new NextRequest("https://localhost:3002/api/user/interactive-brokers/oauth/start");
+  }
+
+  it("sends a signed-out visitor to sign-in on the public address, not the server's own", async () => {
+    vi.stubEnv("AUTH_URL", "https://compassfinance.online/api/auth");
+    const { UnauthenticatedError } = await import("@/server/auth/session");
+    requireUserId.mockRejectedValue(new UnauthenticatedError());
+
+    const res = await GET(requestAsSeenBehindProxy());
+
+    expect(res.headers.get("location")).toBe("https://compassfinance.online/signin");
+  });
+
+  it("sends the not-configured error back to the public Connected accounts page", async () => {
+    vi.stubEnv("AUTH_URL", "https://compassfinance.online/api/auth");
+    fetchInteractiveBrokersRequestToken.mockResolvedValue({ ok: false, reason: "not_configured" });
+
+    const res = await GET(requestAsSeenBehindProxy());
+
+    expect(res.headers.get("location")).toBe(
+      "https://compassfinance.online/profile/connected-accounts?ibkr=error&reason=not_configured"
+    );
+  });
 });
 
 describe("GET /api/user/interactive-brokers/oauth/start", () => {

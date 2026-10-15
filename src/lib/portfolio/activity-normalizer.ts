@@ -315,17 +315,24 @@ export type InteractiveBrokersActivityRowInput = {
 };
 
 /** Buckets a stored IBKR BrokerageActivity row's raw `type` string into a
- * display kind. Only a type string that literally contains "divid"
- * (case-insensitive) is shown as a dividend — the one category IBKR's
- * own endpoint description explicitly names and this integration can
- * therefore assert with real confidence; everything else (an
- * undocumented "transfer" type, or any value this integration hasn't
- * seen a real example of) is the same honest "transfer" catch-all
- * Trading 212's own mapTransactionKind uses, with the original string
- * always preserved as `rawType` for diagnostics. */
+ * display kind. The raw string is IBKR's own wording and is always kept
+ * as `rawType`; only wording that is unambiguous is given a dedicated kind:
+ *   - contains "divid"                  -> dividend (also "Payment in lieu of dividends")
+ *   - contains "deposit"/"withdraw"     -> deposit or withdrawal. A Flex report
+ *     uses one combined type, "Deposits/Withdrawals", so the SIGN of the
+ *     amount decides which it was.
+ *   - contains "fee" or "commission"    -> fee ("Other Fees", "Broker Fees",
+ *     "Commission Adjustments")
+ *   - anything else (interest, tax, transfers, undocumented types) is the same
+ *     honest "transfer" catch-all Trading 212's mapTransactionKind uses. */
 export function normalizeInteractiveBrokersActivityRow(row: InteractiveBrokersActivityRowInput): NormalizedActivityItem {
-  const isDividend = row.type.toLowerCase().includes("divid");
-  const kind: ActivityKind = isDividend ? "dividend" : "transfer";
+  const lowerType = row.type.toLowerCase();
+  const isDividend = lowerType.includes("divid");
+  let kind: ActivityKind = "transfer";
+  if (isDividend) kind = "dividend";
+  else if (lowerType.includes("deposit")) kind = row.amount < 0 ? "withdrawal" : "deposit";
+  else if (lowerType.includes("withdraw")) kind = "withdrawal";
+  else if (/\bfees?\b|commission/.test(lowerType)) kind = "fee";
   const assetName = row.externalTicker
     ? resolveAssetName(row.compassAssetId, row.externalName, row.externalTicker)
     : (row.externalName ?? null);
@@ -342,7 +349,7 @@ export function normalizeInteractiveBrokersActivityRow(row: InteractiveBrokersAc
     price: null,
     grossAmount: row.amount,
     netAmount: null,
-    fees: null,
+    fees: kind === "fee" ? Math.abs(row.amount) : null,
     currency: row.currencyCode,
     orderId: null,
     externalId: row.externalId,

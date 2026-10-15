@@ -13,6 +13,11 @@ vi.mock("@/server/repositories/interactive-brokers-repository", () => ({
   getInteractiveBrokersConnection: (...args: unknown[]) => getInteractiveBrokersConnection(...args),
 }));
 
+const getInteractiveBrokersConfig = vi.fn();
+vi.mock("@/server/interactive-brokers/interactive-brokers-config", () => ({
+  getInteractiveBrokersConfig: (...args: unknown[]) => getInteractiveBrokersConfig(...args),
+}));
+
 import { GET, DELETE } from "./route";
 
 const CONNECTED_DTO = {
@@ -25,6 +30,7 @@ const CONNECTED_DTO = {
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  getInteractiveBrokersConfig.mockReturnValue(null);
 });
 
 describe("GET /api/user/interactive-brokers", () => {
@@ -45,7 +51,7 @@ describe("GET /api/user/interactive-brokers", () => {
     const body = await res.json();
 
     expect(getInteractiveBrokersConnection).toHaveBeenCalledWith("user-1");
-    expect(body).toEqual({ connection: CONNECTED_DTO });
+    expect(body).toEqual({ connection: CONNECTED_DTO, oauthAvailable: false });
   });
 
   it("returns null when nothing is connected — never fabricates a connected status", async () => {
@@ -54,7 +60,16 @@ describe("GET /api/user/interactive-brokers", () => {
     const res = await GET();
     const body = await res.json();
 
-    expect(body).toEqual({ connection: null });
+    expect(body).toEqual({ connection: null, oauthAvailable: false });
+  });
+
+  it("says the vendor sign-in is available only once Interactive Brokers' settings exist on the server", async () => {
+    getInteractiveBrokersConnection.mockResolvedValue(null);
+    getInteractiveBrokersConfig.mockReturnValue({ consumerKey: "k" });
+
+    const body = await (await GET()).json();
+
+    expect(body.oauthAvailable).toBe(true);
   });
 
   it("never includes any credential-shaped field in the response", async () => {

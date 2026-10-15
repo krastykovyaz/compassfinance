@@ -8,6 +8,7 @@ import { getPrimaryWallet } from "@/server/repositories/wallet-repository";
 import { getHyperliquidAccount } from "@/server/hyperliquid/service";
 import { getQuotes } from "@/server/market/service";
 import { getNewsProvider } from "@/lib/news/news-provider";
+import { getOrFetchNews } from "@/lib/news/news-cache";
 import { findNewsById, filterNewsBySlug, type NewsItem } from "@/lib/news/news-types";
 import { getAsset, ALL_ASSETS, type AssetCatalogEntry } from "@/lib/assets/catalog";
 import { getAssetIdForHyperliquidCoin } from "@/lib/hyperliquid/asset-mapping";
@@ -54,6 +55,14 @@ export type FinancialPosition = {
   value: number | null;
   currency: string | null;
   unrealizedPnl: number | null;
+  /** LONG/SHORT for a Hyperliquid perpetual (whose `quantity` is signed —
+   * negative means short); always null for every spot-only source
+   * (Paper/Trading212/IBKR), which have no shorting concept. Explicit so
+   * the prompt never leaves the model to guess direction from a bare
+   * signed number — a live reported gap: with no side field and no
+   * mention of the sign convention anywhere in the prompt, a short
+   * position could be described back to the user as a long holding. */
+  side: "LONG" | "SHORT" | null;
 };
 
 export type PortfolioSnapshot = {
@@ -156,6 +165,7 @@ async function buildPaperSnapshot(userId: string): Promise<PortfolioSnapshot> {
         value: p.marketValue,
         currency: "USD",
         unrealizedPnl: p.unrealizedPnl,
+        side: null,
       })),
     };
   } catch {
@@ -195,6 +205,7 @@ async function buildTrading212Snapshot(userId: string): Promise<PortfolioSnapsho
       value: p.currentPrice != null ? p.currentPrice * p.quantity : null,
       currency: p.currencyCode,
       unrealizedPnl: p.unrealizedPnl,
+      side: null,
     })),
   };
 }
@@ -231,9 +242,21 @@ async function buildInteractiveBrokersSnapshot(userId: string): Promise<Portfoli
     lastFailedSyncAt: portfolio.lastFailedSyncAt,
     displayName: "Interactive Brokers",
   });
+  // A connection made with a Flex report is a statement as of the previous
+  // business day's close. The model must say so rather than present those
+  // figures as live (an existing limitation message is kept as it is).
+  const finalCoverage =
+    connection.method === "flex"
+      ? {
+          ...realCoverage,
+          message:
+            realCoverage.message ??
+            "These figures come from an Interactive Brokers Flex report, which is as of the previous business day's close, not live.",
+        }
+      : realCoverage;
   return {
     source: "IBKR",
-    coverage: realCoverage,
+    coverage: finalCoverage,
     totalValue: portfolio.account?.totalValue ?? null,
     currency: portfolio.account?.currencyCode ?? null,
     unrealizedPnl: portfolio.account?.unrealizedPnl ?? null,
@@ -243,9 +266,15 @@ async function buildInteractiveBrokersSnapshot(userId: string): Promise<Portfoli
       name: p.externalName,
       compassAssetId: p.compassAssetId,
       quantity: p.quantity,
-      value: p.currentPrice != null ? p.currentPrice * p.quantity : null,
+      // A derivative's (option/future) contract multiplier scales price
+      // into real notional value — omitting it here understated an
+      // option position's value to Compass by exactly that factor (e.g.
+      // 100x), the same bug fixed for the Portfolio UI in
+      // normalizeInteractiveBrokersPosition (portfolio-sources.ts).
+      value: p.currentPrice != null ? p.currentPrice * p.quantity * (p.multiplier ?? 1) : null,
       currency: p.currencyCode,
       unrealizedPnl: p.unrealizedPnl,
+      side: null,
     })),
   };
 }
@@ -289,6 +318,7 @@ async function buildHyperliquidSnapshot(userId: string): Promise<PortfolioSnapsh
       value: p.positionValue,
       currency: "USD",
       unrealizedPnl: p.unrealizedPnl,
+      side: p.size < 0 ? "SHORT" : "LONG",
     })),
   };
 }
@@ -326,11 +356,27 @@ function exposureForAsset(snapshots: PortfolioSnapshot[], assetId: string): Fina
   return snapshots.flatMap((s) => s.positions.filter((p) => p.compassAssetId === assetId));
 }
 
-async function buildAssetContext(assetId: string, allSnapshots: PortfolioSnapshot[]): Promise<AssetContextData | null> {
+/** Routes through the SAME cache/in-flight-dedupe the News page's own API
+ * route uses (getOrFetchNews) instead of calling the provider directly —
+ * a live reported gap: the Marketaux provider fetches multiple upstream
+ * pages with no cache of its own and explicitly assumes it's only ever
+ * called from behind getOrFetchNews, but this file was calling it
+ * directly, so an ASSET/NEWS chat turn could trigger several full,
+ * uncached upstream fetches per request. */
+async function fetchNewsItems(): Promise<NewsItem[]> {
+  try {
+    const { items } = await getOrFetchNews(() => getNewsProvider().getLatestNews());
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+async function buildAssetContext(assetId: string, allSnapshots: PortfolioSnapshot[], newsItems: NewsItem[]): Promise<AssetContextData | null> {
   const asset = getAsset(assetId);
   if (!asset) return null;
 
-  const [quoteResults, newsItems] = await Promise.all([getQuotes([assetId]), getNewsProvider().getLatestNews().catch(() => [] as NewsItem[])]);
+  const quoteResults = await getQuotes([assetId]);
   const quoteResult = quoteResults[0];
   const quote = quoteResult?.status === "ok" ? { price: quoteResult.quote.price, change: quoteResult.quote.change, changePercent: quoteResult.quote.changePercent } : null;
 
@@ -407,13 +453,19 @@ export async function buildFinancialContext(params: BuildFinancialContextParams)
   let news: NewsContextData | undefined;
   let learning: LearningContext | undefined;
 
+  // Memoized within this one call — even when both the primary context
+  // AND the mentioned-asset follow-up (below) need news, the upstream
+  // provider is asked at most once per request.
+  let newsItemsCache: Promise<NewsItem[]> | null = null;
+  const getNewsItemsOnce = () => (newsItemsCache ??= fetchNewsItems());
+
   if (context.type === "HOME" || context.type === "PROFILE") {
     portfolios = await buildAllPortfolioSnapshots(userId);
   } else if (context.type === "PORTFOLIO") {
     portfolios = context.source === "ALL" ? await buildAllPortfolioSnapshots(userId) : [await buildPortfolioSnapshot(userId, context.source)];
   } else if (context.type === "ASSET") {
     portfolios = await buildAllPortfolioSnapshots(userId);
-    asset = (await buildAssetContext(context.assetId, portfolios)) ?? undefined;
+    asset = (await buildAssetContext(context.assetId, portfolios, await getNewsItemsOnce())) ?? undefined;
   } else if (context.type === "NEWS") {
     portfolios = await buildAllPortfolioSnapshots(userId);
     // With no specific articleId, the user is browsing the news feed
@@ -423,9 +475,7 @@ export async function buildFinancialContext(params: BuildFinancialContextParams)
     // portfolio data plus its own general market knowledge, same as it
     // would for a HOME-context market question.
     if (context.articleId) {
-      const items = await getNewsProvider()
-        .getLatestNews()
-        .catch(() => [] as NewsItem[]);
+      const items = await getNewsItemsOnce();
       const article = findNewsById(items, context.articleId) ?? null;
       const relatedAssetIds = article ? (ALL_ASSETS as AssetCatalogEntry[]).filter((a) => article.symbols.some((s) => s.toUpperCase() === a.symbol.toUpperCase())).map((a) => a.id) : [];
       const exposure = relatedAssetIds.flatMap((id) => exposureForAsset(portfolios, id));
@@ -449,14 +499,18 @@ export async function buildFinancialContext(params: BuildFinancialContextParams)
     // HYPERLIQUID_CONNECTION) — informational only; still surface that
     // ONE connection's own real coverage so Compass can answer "is it
     // synced?" honestly instead of guessing.
-    if (context.type === "TRADING212_CONNECTION") portfolios = [await buildTrading212Snapshot(userId)];
+    if (context.type === "CONNECTED_ACCOUNTS") {
+      // All three connections side by side: Compass can then see which are
+      // connected, stale or failing when someone asks why one won't connect.
+      portfolios = await Promise.all([buildTrading212Snapshot(userId), buildInteractiveBrokersSnapshot(userId), buildHyperliquidSnapshot(userId)]);
+    } else if (context.type === "TRADING212_CONNECTION") portfolios = [await buildTrading212Snapshot(userId)];
     else if (context.type === "IBKR_CONNECTION") portfolios = [await buildInteractiveBrokersSnapshot(userId)];
     else if (context.type === "HYPERLIQUID_CONNECTION") portfolios = [await buildHyperliquidSnapshot(userId)];
   }
 
   const currentAssetId = context.type === "ASSET" ? context.assetId : (context.type === "LEARNING" ? context.assetId : undefined);
   const mentionedAssetId = detectMentionedAssetId(message, currentAssetId);
-  const mentionedAsset = mentionedAssetId ? ((await buildAssetContext(mentionedAssetId, portfolios)) ?? undefined) : undefined;
+  const mentionedAsset = mentionedAssetId ? ((await buildAssetContext(mentionedAssetId, portfolios, await getNewsItemsOnce())) ?? undefined) : undefined;
 
   const coverage = portfolios.map((p) => p.coverage);
 

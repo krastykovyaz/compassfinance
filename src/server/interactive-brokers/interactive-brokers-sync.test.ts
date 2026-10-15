@@ -234,6 +234,25 @@ describe("syncInteractiveBrokers — connection state", () => {
 
     expect(result.status).toBe("synced");
   });
+
+  it("releases the sync lock and records a failure on a genuinely unexpected exception, instead of leaving the connection wedged in SYNCING for the whole stale-lock window (a live reported gap: no try/finally around the locked section)", async () => {
+    seedConnection("user-1");
+    fetchInteractiveBrokersLiveSessionToken.mockRejectedValue(new Error("unexpected: DH key derivation blew up"));
+
+    const result = await syncInteractiveBrokers("user-1");
+
+    expect(result.status).toBe("failed");
+    const stored = connectionRows.get("user-1")!;
+    expect(stored.syncStatus).toBe("FAILED");
+    expect(stored.syncError).not.toContain("DH key derivation"); // never the raw exception message
+    expect(stored.syncStatus).not.toBe("SYNCING"); // lock released, not wedged
+
+    // And the lock being released means a follow-up attempt isn't blocked
+    // by "already_syncing" — it can retry immediately.
+    fetchInteractiveBrokersLiveSessionToken.mockResolvedValue({ ok: true, data: { liveSessionToken: "lst", expiresAt: null } });
+    const retry = await syncInteractiveBrokers("user-1");
+    expect(retry.status).not.toBe("already_syncing");
+  });
 });
 
 describe("syncInteractiveBrokers — not configured", () => {
@@ -559,6 +578,35 @@ describe("syncInteractiveBrokers — activity step (Phase 3)", () => {
     expect(row.filledValue).toBe(1300);
     expect(row.externalTicker).toBe("MCD"); // resolved from the already-synced position, not IBKR's company-name field
     expect(activityTable.rows.size).toBe(0);
+  });
+
+  it("derives side from IBKR's own type string, not the sign of quantity — a Sell row with a positive (unsigned-magnitude) quantity is still stored as SELL", async () => {
+    seedConnection("user-1");
+    fetchInteractiveBrokersPositions.mockResolvedValue({ ok: true, data: [ibkrPosition()] });
+    fetchInteractiveBrokersTransactions.mockResolvedValue({
+      ok: true,
+      data: [{ conid: 9408, description: "McDonald's Corp", type: "Sell", quantity: 5, price: 260, amount: 1300, currencyCode: "USD", occurredAt: "2026-08-01T00:00:00.000Z" }],
+    });
+
+    await syncInteractiveBrokers("user-1");
+
+    const row = [...orderTable.rows.values()][0];
+    expect(row.side).toBe("SELL");
+  });
+
+  it("stores filledValue as an unsigned gross notional — IBKR's own signed cash amount (negative for a Buy) is never persisted raw", async () => {
+    seedConnection("user-1");
+    fetchInteractiveBrokersPositions.mockResolvedValue({ ok: true, data: [ibkrPosition()] });
+    fetchInteractiveBrokersTransactions.mockResolvedValue({
+      ok: true,
+      data: [{ conid: 9408, description: "McDonald's Corp", type: "Buy", quantity: 3, price: 250, amount: -750, currencyCode: "USD", occurredAt: "2026-08-01T00:00:00.000Z" }],
+    });
+
+    await syncInteractiveBrokers("user-1");
+
+    const row = [...orderTable.rows.values()][0];
+    expect(row.side).toBe("BUY");
+    expect(row.filledValue).toBe(750);
   });
 
   it("stores a non-Buy/Sell row in BrokerageActivity, preserving the raw type string", async () => {

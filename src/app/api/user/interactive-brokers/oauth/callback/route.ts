@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUserId } from "@/server/auth/session";
+import { publicUrl } from "@/server/public-origin";
 import { fetchInteractiveBrokersAccessToken } from "@/server/interactive-brokers/interactive-brokers-client";
 import {
   IBKR_OAUTH_STATE_COOKIE_NAME,
@@ -31,7 +32,7 @@ import { completeInteractiveBrokersOAuthConnection } from "@/server/repositories
 const CONNECTED_ACCOUNTS_PATH = "/profile/connected-accounts";
 
 function errorRedirect(req: NextRequest, reason: string): NextResponse {
-  const response = NextResponse.redirect(new URL(`${CONNECTED_ACCOUNTS_PATH}?ibkr=error&reason=${reason}`, req.url));
+  const response = NextResponse.redirect(publicUrl(`${CONNECTED_ACCOUNTS_PATH}?ibkr=error&reason=${reason}`, req));
   response.cookies.delete(IBKR_OAUTH_STATE_COOKIE_NAME);
   return response;
 }
@@ -77,7 +78,7 @@ export async function GET(req: NextRequest) {
 
   await completeInteractiveBrokersOAuthConnection(userId, result.data.accessToken, result.data.accessTokenSecret);
 
-  const response = NextResponse.redirect(new URL(`${CONNECTED_ACCOUNTS_PATH}?ibkr=connected`, req.url));
+  const response = NextResponse.redirect(publicUrl(`${CONNECTED_ACCOUNTS_PATH}?ibkr=connected`, req));
   response.cookies.delete(IBKR_OAUTH_STATE_COOKIE_NAME);
   return response;
 }

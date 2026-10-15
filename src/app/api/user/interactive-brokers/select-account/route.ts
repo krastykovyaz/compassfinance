@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
+import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { discoverInteractiveBrokersAccounts } from "@/server/interactive-brokers/interactive-brokers-sync";
 import { setInteractiveBrokersSelectedAccount } from "@/server/repositories/interactive-brokers-repository";
 
@@ -20,6 +21,16 @@ import { setInteractiveBrokersSelectedAccount } from "@/server/repositories/inte
 export async function POST(req: NextRequest) {
   return withApiErrorHandling(async () => {
     const userId = await requireUserId();
+
+    // Each call re-authenticates against IBKR (RSA + Diffie-Hellman live-
+    // session-token derivation, then a real /portfolio/accounts request)
+    // before the submitted accountId is even validated — without a limit
+    // here, a tight client loop burns the app's single shared
+    // IBKR_CONSUMER_KEY's rate budget for every user.
+    if (!checkRateLimit(`ibkr-select-account:${userId}`)) {
+      throw new Error("Too many requests — please wait a moment before trying again.");
+    }
+
     const body = await req.json().catch(() => null);
     const accountId = body?.accountId;
     if (typeof accountId !== "string" || !accountId.trim()) {

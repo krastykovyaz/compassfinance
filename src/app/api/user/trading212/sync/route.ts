@@ -1,5 +1,6 @@
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
+import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { syncTrading212 } from "@/server/trading212/trading212-sync";
 
 // Phase 2 — the "Sync" button's endpoint; Phase 5 — now shares its engine
@@ -13,6 +14,14 @@ import { syncTrading212 } from "@/server/trading212/trading212-sync";
 export async function POST() {
   return withApiErrorHandling(async () => {
     const userId = await requireUserId();
+
+    // The sync lock only serializes concurrent calls, it doesn't throttle
+    // repeat calls — without this, a tight client loop can spend the
+    // app's shared Trading 212 API budget for this user.
+    if (!checkRateLimit(`trading212-sync:${userId}`)) {
+      throw new Error("Too many requests — please wait a moment before trying again.");
+    }
+
     const result = await syncTrading212(userId);
 
     if (result.status === "not_connected") {

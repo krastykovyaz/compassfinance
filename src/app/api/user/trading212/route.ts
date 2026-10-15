@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
+import { checkRateLimit } from "@/lib/ai/rate-limit";
 import {
   connectTrading212,
   disconnectTrading212,
@@ -22,6 +23,14 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   return withApiErrorHandling(async () => {
     const userId = await requireUserId();
+
+    // Each call validates the submitted credentials against Trading 212
+    // itself — without a limit, a signed-in caller could rapid-fire
+    // credential guesses through this endpoint.
+    if (!checkRateLimit(`trading212-connect:${userId}`)) {
+      throw new Error("Too many requests — please wait a moment before trying again.");
+    }
+
     const body = await req.json().catch(() => null);
     const apiKey = body?.apiKey;
     const apiSecret = body?.apiSecret;

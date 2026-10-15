@@ -48,7 +48,18 @@ export type CompassChatSuccess = {
   suggestedFollowUps: string[];
 };
 
-export type CompassChatFailure = { ok: false; kind: CompassChatFailureKind };
+export type CompassChatFailure = {
+  ok: false;
+  kind: CompassChatFailureKind;
+  /** Set whenever a conversation row already exists at the point of
+   * failure (including one just created for a first message) — lets the
+   * client retry by APPENDING to that same conversation instead of
+   * creating a new one on every failed attempt (a live reported bug: a
+   * failed first message left an orphaned conversation, and each retry
+   * created another). Absent only for failures that never reach
+   * conversation creation (invalid_message). */
+  conversationId?: string;
+};
 
 export type CompassChatResult = CompassChatSuccess | CompassChatFailure;
 
@@ -98,14 +109,15 @@ async function buildStructuredResponse(params: {
   const system = buildCompassSystemPrompt(params.locale);
   const user = buildCompassUserPrompt({ context: params.context, financialContext, history: params.history, message: params.message });
 
-  // maxTokens=1200 and disableReasoning=true together: Compass wants a
-  // deterministic structured answer, not open-ended deliberation, and a
-  // reasoning pass was observed live consuming the ENTIRE previous
-  // 700-token budget on its own (reasoning_tokens alone > 700), leaving
-  // nothing for the actual JSON and producing an unparseable empty
-  // response every time. Disabling it removes that risk outright and
-  // typically finishes in ~1-3s instead of ~15-20s.
-  const result = await getAIProvider().complete({ systemPrompt: system, userPrompt: user, expectJson: true, maxTokens: 1200, disableReasoning: true });
+  // maxTokens=1200 — Compass wants a deterministic structured answer, not
+  // open-ended deliberation, and a reasoning pass was observed live
+  // consuming the ENTIRE previous 700-token budget on its own
+  // (reasoning_tokens alone > 700), leaving nothing for the actual JSON
+  // and producing an unparseable empty response every time.
+  // expectJson: true already defaults DeepSeekProvider to
+  // disableReasoning, removing that risk outright and typically finishing
+  // in ~1-3s instead of ~15-20s (see deepseek-provider.ts).
+  const result = await getAIProvider().complete({ systemPrompt: system, userPrompt: user, expectJson: true, maxTokens: 1200 });
   if (!result.ok) return { ok: false, kind: result.kind, latencyMs: result.latencyMs };
 
   const validated = validateCompassResult(result.text);
@@ -153,11 +165,25 @@ export async function compassChat(params: CompassChatParams): Promise<CompassCha
   let conversationId: string;
   let history: CompassMessageDTO[];
 
+  // The conversation's OWN stored context (its identity/topic) governs
+  // what data gets fetched for a follow-up — never the fresh per-request
+  // context alone. Without this, a client that keeps the sheet open
+  // across navigation (CompassProvider lives in the root layout, so it
+  // survives client-side routing) could send a follow-up in an
+  // NVDA-scoped thread with a PORTFOLIO context picked up from whatever
+  // screen the user is now on, and the engine would silently answer the
+  // NVDA conversation with portfolio data. The client still sends its own
+  // context on every request (Section 24) — it's used for a NEW
+  // conversation's identity and is kept as a fallback if a stored
+  // conversation's own context somehow fails to decode.
+  let effectiveContext = context;
+
   if (params.conversationId) {
     const existing = await getCompassConversation(userId, params.conversationId);
     if (!existing) return { ok: false, kind: "conversation_not_found" };
     history = existing.messages;
     conversationId = existing.id;
+    effectiveContext = existing.context ?? context;
     await appendCompassMessage({ conversationId, role: "user", content: message, structuredData: null });
   } else {
     const created = await createCompassConversation({ userId, context, firstMessage: { role: "user", content: message, structuredData: null } });
@@ -177,15 +203,15 @@ export async function compassChat(params: CompassChatParams): Promise<CompassCha
     const suggestedFollowUps = safeRedirectFollowUps();
 
     await appendCompassMessage({ conversationId, role: "assistant", content: text, structuredData: JSON.stringify({ blocks, suggestedFollowUps }) });
-    logCompassOperation({ contextType: context.type, locale, latencyMs: Date.now() - startedAt, success: true });
+    logCompassOperation({ contextType: effectiveContext.type, locale, latencyMs: Date.now() - startedAt, success: true });
     return { ok: true, conversationId, text, blocks, suggestedFollowUps };
   }
 
-  const result = await buildStructuredResponse({ userId, context, message, locale, learningDifficulty: params.learningDifficulty, history });
+  const result = await buildStructuredResponse({ userId, context: effectiveContext, message, locale, learningDifficulty: params.learningDifficulty, history });
 
   if (!result.ok) {
-    logCompassOperation({ contextType: context.type, locale, latencyMs: result.latencyMs, success: false, failureKind: result.kind });
-    return { ok: false, kind: result.kind };
+    logCompassOperation({ contextType: effectiveContext.type, locale, latencyMs: result.latencyMs, success: false, failureKind: result.kind });
+    return { ok: false, kind: result.kind, conversationId };
   }
 
   await appendCompassMessage({
@@ -195,7 +221,7 @@ export async function compassChat(params: CompassChatParams): Promise<CompassCha
     structuredData: JSON.stringify({ blocks: result.data.blocks, suggestedFollowUps: result.data.suggestedFollowUps }),
   });
 
-  logCompassOperation({ contextType: context.type, locale, latencyMs: result.latencyMs, success: true });
+  logCompassOperation({ contextType: effectiveContext.type, locale, latencyMs: result.latencyMs, success: true });
 
   return { ok: true, conversationId, text: result.data.text, blocks: result.data.blocks, suggestedFollowUps: result.data.suggestedFollowUps };
 }

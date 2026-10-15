@@ -13,7 +13,7 @@ import { AchievementToast } from "@/components/learning/achievement-toast";
 // root layout actually is.
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col bg-canvas">
+    <div className="flex min-h-app flex-col bg-canvas">
       <AchievementToast />
       {/* BottomNavigation is `fixed`, so it no longer reserves its own
        * space in flow — this padding stands in for that (nav's own

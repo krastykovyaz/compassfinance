@@ -4,12 +4,21 @@ import { useEffect, useState } from "react";
 
 export type InteractiveBrokersConnectionDTO = {
   status: "CONNECTED" | "DISCONNECTED" | "ERROR";
+  /** How it was connected: the vendor OAuth flow or a Flex report. */
+  method: "oauth" | "flex";
   lastConnectedAt: string | null;
 };
 
 export type InteractiveBrokersConnectionState =
   | { stage: "loading" }
-  | { stage: "loaded"; connection: InteractiveBrokersConnectionDTO | null }
+  | {
+      stage: "loaded";
+      connection: InteractiveBrokersConnectionDTO | null;
+      /** False until Interactive Brokers has approved CompassFinance and the
+       * server has its IBKR_* settings; the vendor sign-in button is hidden
+       * while it is false because it can only end in an error. */
+      oauthAvailable: boolean;
+    }
   | { stage: "error" };
 
 /** The one place that fetches GET /api/user/interactive-brokers — shared
@@ -26,8 +35,8 @@ export function useInteractiveBrokersConnection() {
         setState({ stage: "error" });
         return;
       }
-      const body = (await res.json()) as { connection: InteractiveBrokersConnectionDTO | null };
-      setState({ stage: "loaded", connection: body.connection });
+      const body = (await res.json()) as { connection: InteractiveBrokersConnectionDTO | null; oauthAvailable?: boolean };
+      setState({ stage: "loaded", connection: body.connection, oauthAvailable: body.oauthAvailable === true });
     } catch {
       setState({ stage: "error" });
     }

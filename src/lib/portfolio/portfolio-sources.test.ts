@@ -192,6 +192,17 @@ describe("normalizeInteractiveBrokersPosition", () => {
     expect(withoutPrice.marketValue).toBeNull();
   });
 
+  it("scales marketValue by the contract multiplier for a derivative — a live reported bug understated an option's value by exactly this factor", () => {
+    const option = normalizeInteractiveBrokersPosition(
+      interactiveBrokersPosition({ assetClass: "OPT", currentPrice: 2.5, quantity: 3, multiplier: 100 }),
+      null
+    );
+    expect(option.marketValue).toBe(750); // 2.5 * 3 * 100, not 7.5
+
+    const stock = normalizeInteractiveBrokersPosition(interactiveBrokersPosition({ assetClass: "STK", currentPrice: 258.83, quantity: 12, multiplier: null }), null);
+    expect(stock.marketValue).toBeCloseTo(3105.96); // multiplier null -> treated as 1, unchanged
+  });
+
   it("always uses IBKR's own reported unrealizedPnl directly — never recomputes one", () => {
     const result = normalizeInteractiveBrokersPosition(
       interactiveBrokersPosition({ unrealizedPnl: 88.55, currentPrice: 258.83, averagePrice: 266.2, quantity: 12 }),

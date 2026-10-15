@@ -7,10 +7,8 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 const checkRateLimit = vi.fn();
-const getClientKey = vi.fn();
 vi.mock("@/lib/ai/rate-limit", () => ({
   checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
-  getClientKey: (...args: unknown[]) => getClientKey(...args),
 }));
 
 const compassChat = vi.fn();
@@ -34,7 +32,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
   checkRateLimit.mockReturnValue(true);
-  getClientKey.mockReturnValue("1.2.3.4");
   compassChat.mockResolvedValue({ ok: true, conversationId: "conv-1", text: "Here is your analysis.", blocks: [], suggestedFollowUps: [] });
 });
 
@@ -64,6 +61,11 @@ describe("POST /api/compass/chat — rate limiting", () => {
   it("namespaces the rate-limit key so it can't collide with other AI endpoints", async () => {
     await POST(request(VALID_BODY));
     expect(checkRateLimit).toHaveBeenCalledWith(expect.stringMatching(/^compass:/));
+  });
+
+  it("keys the rate limit on the authenticated userId, not a client-supplied header — spoofing x-forwarded-for can't bypass it", async () => {
+    await POST(request(VALID_BODY));
+    expect(checkRateLimit).toHaveBeenCalledWith("compass:user-1");
   });
 });
 
@@ -142,5 +144,12 @@ describe("POST /api/compass/chat — response mapping", () => {
     compassChat.mockResolvedValue({ ok: false, kind: "invalid_response" });
     const res = await POST(request(VALID_BODY));
     expect(res.status).toBe(503);
+  });
+
+  it("forwards conversationId on failure so a retry can append instead of creating a new conversation", async () => {
+    compassChat.mockResolvedValue({ ok: false, kind: "timeout", conversationId: "conv-1" });
+    const res = await POST(request(VALID_BODY));
+    const json = await res.json();
+    expect(json.conversationId).toBe("conv-1");
   });
 });

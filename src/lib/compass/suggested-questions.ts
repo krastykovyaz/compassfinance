@@ -23,6 +23,15 @@ export function getSuggestedQuestionKeys(contextType: CompassContextType): strin
     case "IBKR_CONNECTION":
     case "HYPERLIQUID_CONNECTION":
       return ["compass.suggestedConnection1", "compass.suggestedConnection2", "compass.suggestedConnection3", "compass.suggestedConnection4"];
+    case "CONNECTED_ACCOUNTS":
+      // Starter questions for the Connected accounts screen: how to connect
+      // each account, and what to do when one will not connect.
+      return [
+        "compass.suggestedConnectedAccounts1",
+        "compass.suggestedConnectedAccounts2",
+        "compass.suggestedConnectedAccounts3",
+        "compass.suggestedConnectedAccounts4",
+      ];
     case "PROFILE":
       return ["compass.suggestedProfile1", "compass.suggestedProfile2", "compass.suggestedProfile3"];
   }

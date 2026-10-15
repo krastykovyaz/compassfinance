@@ -26,6 +26,10 @@ export type CompassContext =
   | { type: "TRADING212_CONNECTION" }
   | { type: "IBKR_CONNECTION" }
   | { type: "HYPERLIQUID_CONNECTION" }
+  // The Connected accounts screen as a whole (all three connections side by
+  // side). The three per-connection types above predate it and are kept
+  // because saved conversations can still carry them.
+  | { type: "CONNECTED_ACCOUNTS" }
   | { type: "PROFILE" };
 
 export type CompassContextType = CompassContext["type"];
@@ -56,6 +60,8 @@ export function parseCompassContext(raw: unknown): CompassContext | null {
       return { type: "IBKR_CONNECTION" };
     case "HYPERLIQUID_CONNECTION":
       return { type: "HYPERLIQUID_CONNECTION" };
+    case "CONNECTED_ACCOUNTS":
+      return { type: "CONNECTED_ACCOUNTS" };
     case "PORTFOLIO":
       return PORTFOLIO_SOURCES.includes(obj.source as PortfolioContextSource)
         ? { type: "PORTFOLIO", source: obj.source as PortfolioContextSource }
@@ -117,6 +123,8 @@ export function decodeContext(contextType: string, contextKey: string | null): C
       return { type: "IBKR_CONNECTION" };
     case "HYPERLIQUID_CONNECTION":
       return { type: "HYPERLIQUID_CONNECTION" };
+    case "CONNECTED_ACCOUNTS":
+      return { type: "CONNECTED_ACCOUNTS" };
     case "PORTFOLIO":
       return contextKey && PORTFOLIO_SOURCES.includes(contextKey as PortfolioContextSource)
         ? { type: "PORTFOLIO", source: contextKey as PortfolioContextSource }

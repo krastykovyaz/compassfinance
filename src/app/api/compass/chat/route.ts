@@ -10,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { requireUserId, UnauthenticatedError } from "@/server/auth/session";
-import { checkRateLimit, getClientKey } from "@/lib/ai/rate-limit";
+import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { parseCompassContext } from "@/lib/compass/context";
 import { isDifficultyLevel } from "@/lib/ai/difficulty";
 import { isSupportedLocale } from "@/lib/i18n/translate";
@@ -50,7 +50,11 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  if (!checkRateLimit(`compass:${getClientKey(request.headers)}`)) {
+  // Keyed on the authenticated userId, not a client-supplied header
+  // (x-forwarded-for is trivially spoofable by the request's own sender
+  // and isn't overwritten by a trusted proxy in this deployment) — the
+  // whole point is bounding one signed-in user's DeepSeek spend.
+  if (!checkRateLimit(`compass:${userId}`)) {
     return NextResponse.json({ ok: false, reason: "rate_limited" }, { status: 429 });
   }
 
@@ -89,7 +93,11 @@ export async function POST(request: Request) {
   const result = await compassChat({ userId, conversationId, message: obj.message, context, locale, learningDifficulty });
 
   if (!result.ok) {
-    return NextResponse.json({ ok: false, reason: result.kind }, { status: statusFor(result.kind) });
+    // Forward conversationId when the engine set one (a conversation row
+    // already exists, e.g. a new one just created for a first message
+    // that then failed) so the client's retry appends to it instead of
+    // creating another orphaned conversation.
+    return NextResponse.json({ ok: false, reason: result.kind, conversationId: result.conversationId }, { status: statusFor(result.kind) });
   }
 
   return NextResponse.json({

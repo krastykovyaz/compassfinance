@@ -96,7 +96,13 @@ export function normalizeInteractiveBrokersPosition(
   lastSyncAt: string | null
 ): SourcedPosition {
   const asset = position.compassAssetId ? getAsset(position.compassAssetId) : undefined;
-  const marketValue = position.currentPrice != null ? position.currentPrice * position.quantity : null;
+  // A derivative's (option/future) contract multiplier scales price into
+  // real notional value — IBKR reports currentPrice as the PER-CONTRACT
+  // price, so a naive price * quantity understates value by exactly the
+  // multiplier factor (e.g. 100x for a standard equity option). null/1
+  // for a plain stock, where one contract really is one share.
+  const multiplier = position.multiplier ?? 1;
+  const marketValue = position.currentPrice != null ? position.currentPrice * position.quantity * multiplier : null;
 
   return {
     source: "interactive_brokers",

@@ -24,7 +24,7 @@ export type CompassChatState = {
 export type CompassChatAction =
   | { type: "SEND_START"; message: CompassChatMessage }
   | { type: "SEND_SUCCESS"; conversationId: string; message: CompassChatMessage; suggestedFollowUps: string[] }
-  | { type: "SEND_ERROR"; reason: string }
+  | { type: "SEND_ERROR"; reason: string; conversationId?: string }
   | { type: "RESET" };
 
 export const INITIAL_COMPASS_CHAT_STATE: CompassChatState = {
@@ -52,8 +52,14 @@ export function compassChatReducer(state: CompassChatState, action: CompassChatA
       // Deliberately keeps the just-added user message in place (it was
       // really sent) rather than rolling it back — the UI shows an error
       // state alongside it so the user can see what failed and retry,
-      // rather than losing their own typed text.
-      return { ...state, status: "error", errorReason: action.reason };
+      // rather than losing their own typed text. Adopts the server's
+      // conversationId when one comes back (a conversation row was
+      // already created for this attempt, e.g. a first message whose
+      // DeepSeek call then failed) so the retry appends to THAT
+      // conversation instead of creating a new one every time — a live
+      // reported bug where each failed first attempt orphaned a fresh
+      // conversation row.
+      return { ...state, status: "error", errorReason: action.reason, conversationId: action.conversationId ?? state.conversationId };
     case "RESET":
       return INITIAL_COMPASS_CHAT_STATE;
   }

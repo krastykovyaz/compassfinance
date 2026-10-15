@@ -698,3 +698,65 @@ Added: `interactive-brokers-activity.test.ts` (idempotency-key determinism and c
 ### Explicit scope boundary
 
 Per this phase's own instructions: no trading, order placement, order cancellation, order modification, or `/iserver/*` endpoint was introduced. No Compass Agent integration was touched. Orders (lifecycle sense), fees, and deposits/withdrawals remain genuinely unimplemented — documented above as a researched API limitation, never silently represented as "0 results" without explanation.
+
+
+---
+
+## 23. Flex Web Service connection (personal accounts)
+
+The vendor OAuth route (everything above) needs IBKR's approval of
+CompassFinance as a company, which an individual cannot obtain, so a second
+connection method exists for a person's own account. It uses the Flex Web
+Service described in section 10.
+
+**What the user does.** In their own IBKR Client Portal (Performance &
+Reports, then Flex Queries) they create an Activity Flex Query with Account
+Information (Account ID, Currency, Account Type only), Cash Report, Net Asset
+Value (NAV) in Base, Open Positions (Summary), Trades (Execution), Cash
+Transactions (Detail) and Transfers, in XML, over a long period, with
+"Include Currency Rates" on. They then enable the Flex Web Service, generate
+a token (longest validity, no IP restriction) and paste the token and the
+Query ID into CompassFinance's Connect form.
+
+**Pitfalls real users hit** (all now in the connect screen's help list and in
+Compass's instructions):
+- The Flex settings are on the Interactive Brokers website only. The mobile
+  app has no entry for them; on a phone, use the browser's desktop site.
+- The query's Period defaults to "Last Business Day", which returns one day of
+  trades. It must be changed to a long period such as Last 365 Calendar Days.
+- "Include Currency Rates" defaults to No and should be Yes.
+- "Select All" in Account Information adds address, date of birth, email and
+  beneficiary details. Only Account ID, Currency and Account Type are wanted.
+  The parser ignores the rest, but the token would still be able to fetch it.
+- The Query ID appears behind the (i) icon next to the query; the token comes
+  from the gear icon in the Flex Web Service Configuration panel and is shown
+  once.
+- Screenshots of these pages show the account number.
+
+**What the app does.**
+- `interactive-brokers-flex-client.ts`: SendRequest then GetStatement (v=3),
+  polling while IBKR reports the statement is still generating. The token
+  travels in the URL because IBKR defines it so; it is never logged, never
+  placed in an error, and redirects are refused.
+- `interactive-brokers-flex-parser.ts` (with `-xml.ts`, a small scanner with no
+  DOCTYPE or entity support): reads only the attributes the app uses. Personal
+  fields in Account Information are never read.
+- `interactive-brokers-flex-sync.ts`: writes the account, positions, trades
+  (as filled orders), cash transactions and transfers into the same tables the
+  OAuth sync fills, so the Portfolio page, activity feed and Compass read
+  either connection unchanged. `syncInteractiveBrokersForUser` is the one entry
+  point the sync route calls.
+- Storage: the token and query ID are one tagged JSON envelope inside the
+  existing encrypted `encryptedApiKey`, so no schema change was needed and a
+  Flex token can never be mistaken for an OAuth access token.
+
+**Limits that must stay visible to users and to Compass.**
+- A Flex report is a statement as of the previous business day's close. It is
+  never live; the UI and Compass say so.
+- Deposits, withdrawals and fees are now available (they were not through the
+  OAuth route). They are classified at read time from IBKR's own `type`
+  wording and the sign of the amount.
+- Realized P/L is left empty: the period is a rolling window, not a lifetime.
+- Flex timestamps carry no time zone and are read as UTC.
+- Written against IBKR's documented element and attribute names; the first
+  real report from a live account is the first real test of the parser.
