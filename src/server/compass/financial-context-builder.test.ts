@@ -37,6 +37,19 @@ vi.mock("@/server/market/service", () => ({ getQuotes: (...args: unknown[]) => g
 const getLatestNews = vi.fn();
 vi.mock("@/lib/news/news-provider", () => ({ getNewsProvider: () => ({ getLatestNews }) }));
 
+// Routes through the real news cache's public contract rather than
+// calling the provider directly (see fetchNewsItems's own comment) — the
+// mock here bypasses the actual in-memory TTL store (which would leak
+// state across tests) but still calls through to the mocked
+// getLatestNews so existing call-count assertions stay meaningful.
+const getOrFetchNews = vi.fn(async (fetchFn: () => Promise<unknown[]>) => ({
+  items: await fetchFn(),
+  fromCache: false,
+  fetchedAt: Date.now(),
+  servedStaleAfterError: false,
+}));
+vi.mock("@/lib/news/news-cache", () => ({ getOrFetchNews: (...args: [() => Promise<unknown[]>]) => getOrFetchNews(...args) }));
+
 const buildLearningContext = vi.fn();
 vi.mock("@/lib/ai/curriculum-context", () => ({ buildLearningContext: (...args: unknown[]) => buildLearningContext(...args) }));
 
@@ -130,6 +143,74 @@ describe("buildFinancialContext — PORTFOLIO context, single source", () => {
     expect(result.portfolios[0].totalValue).toBeNull();
   });
 
+  it("IBKR: scales a derivative position's value by its contract multiplier — a live reported bug understated an option's value 100x", async () => {
+    const now = new Date().toISOString();
+    getInteractiveBrokersConnection.mockResolvedValue({ status: "CONNECTED", createdAt: now, updatedAt: now });
+    getInteractiveBrokersPortfolio.mockResolvedValue({
+      accountId: "U123",
+      account: { currencyCode: "USD", totalValue: 750, cashAvailable: 0, investedValue: 750, realizedPnl: 0, unrealizedPnl: 0 },
+      positions: [
+        {
+          compassAssetId: null,
+          externalId: "12345",
+          externalTicker: "AAPL 250117C00250000",
+          externalName: "AAPL Jan17'25 250 Call",
+          currencyCode: "USD",
+          quantity: 3,
+          averagePrice: 2,
+          currentPrice: 2.5,
+          unrealizedPnl: 150,
+          realizedPnl: null,
+          assetClass: "OPT",
+          sector: null,
+          expiry: "2025-01-17",
+          strike: 250,
+          multiplier: 100,
+        },
+      ],
+      lastSyncAt: now,
+      syncStatus: "SYNCED",
+      syncError: null,
+      lastFailedSyncAt: null,
+      connectionStatus: "CONNECTED",
+    });
+    const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "IBKR" }, message: "x", locale: "en" });
+    expect(result.portfolios[0].positions[0].value).toBe(750); // 2.5 * 3 * 100, not 7.5
+  });
+
+  describe("IBKR connected with a Flex report", () => {
+    const syncedPortfolio = (now: string) => ({
+      accountId: "U123",
+      account: { currencyCode: "EUR", totalValue: 1000, cashAvailable: 100, investedValue: 900, realizedPnl: null, unrealizedPnl: 5 },
+      positions: [],
+      lastSyncAt: now,
+      syncStatus: "SYNCED",
+      syncError: null,
+      lastFailedSyncAt: null,
+      connectionStatus: "CONNECTED",
+    });
+
+    it("tells the model the figures are as of the previous business day, not live", async () => {
+      const now = new Date().toISOString();
+      getInteractiveBrokersConnection.mockResolvedValue({ status: "CONNECTED", method: "flex", createdAt: now, updatedAt: now });
+      getInteractiveBrokersPortfolio.mockResolvedValue(syncedPortfolio(now));
+
+      const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "IBKR" }, message: "x", locale: "en" });
+
+      expect(result.portfolios[0].coverage.message).toMatch(/Flex report.*previous business day.*not live/i);
+    });
+
+    it("says nothing extra for an OAuth connection, whose data is not an end-of-day statement", async () => {
+      const now = new Date().toISOString();
+      getInteractiveBrokersConnection.mockResolvedValue({ status: "CONNECTED", method: "oauth", createdAt: now, updatedAt: now });
+      getInteractiveBrokersPortfolio.mockResolvedValue(syncedPortfolio(now));
+
+      const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "IBKR" }, message: "x", locale: "en" });
+
+      expect(result.portfolios[0].coverage.message ?? "").not.toMatch(/Flex/i);
+    });
+  });
+
   it("HYPERLIQUID: no linked wallet yields UNAVAILABLE with a clear reason", async () => {
     const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "HYPERLIQUID" }, message: "x", locale: "en" });
     expect(result.portfolios[0].coverage.status).toBe("UNAVAILABLE");
@@ -159,7 +240,23 @@ describe("buildFinancialContext — PORTFOLIO context, single source", () => {
     const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "HYPERLIQUID" }, message: "x", locale: "en" });
     expect(result.portfolios[0].coverage.status).toBe("AVAILABLE");
     expect(result.portfolios[0].totalValue).toBe(2000);
-    expect(result.portfolios[0].positions[0]).toMatchObject({ source: "HYPERLIQUID", symbol: "AAPL", quantity: -2 });
+    expect(result.portfolios[0].positions[0]).toMatchObject({ source: "HYPERLIQUID", symbol: "AAPL", quantity: -2, side: "SHORT" });
+  });
+
+  it("HYPERLIQUID: a positive size is tagged LONG, not left ambiguous", async () => {
+    getPrimaryWallet.mockResolvedValue({ address: "0xabc", chain: "arbitrum", createdAt: new Date().toISOString(), verifiedAt: null });
+    getHyperliquidAccount.mockResolvedValue({
+      status: "ok",
+      account: {
+        accountValue: 2000,
+        withdrawableBalance: 1500,
+        totalMarginUsed: 500,
+        positions: [{ coin: "BTC", size: 0.5, entryPrice: 60000, leverage: 3, liquidationPrice: 40000, unrealizedPnl: 500, marginUsed: 10000, positionValue: 30000 }],
+        timestamp: Date.now(),
+      },
+    });
+    const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "HYPERLIQUID" }, message: "x", locale: "en" });
+    expect(result.portfolios[0].positions[0]).toMatchObject({ side: "LONG" });
   });
 });
 
@@ -233,6 +330,7 @@ describe("buildFinancialContext — NEWS context", () => {
     expect(result.news?.article?.title).toBe("NVIDIA launches new chip");
     expect(result.news?.relatedAssetIds).toContain("nvda");
     expect(result.news?.exposure).toHaveLength(1);
+    expect(getOrFetchNews).toHaveBeenCalled(); // routed through the shared cache, not the provider directly
   });
 
   it("missing article yields article: null rather than throwing or fabricating one", async () => {
@@ -265,6 +363,11 @@ describe("buildFinancialContext — connection contexts", () => {
     expect(result.portfolios[0].source).toBe("TRADING212");
     expect(getInteractiveBrokersConnection).not.toHaveBeenCalled();
   });
+
+  it("CONNECTED_ACCOUNTS surfaces all three connections side by side", async () => {
+    const result = await buildFinancialContext({ userId: "u1", context: { type: "CONNECTED_ACCOUNTS" }, message: "x", locale: "en" });
+    expect(result.portfolios.map((p) => p.source).sort()).toEqual(["HYPERLIQUID", "IBKR", "TRADING212"]);
+  });
 });
 
 describe("detectMentionedAssetId — 'what about NVIDIA?' follow-up handling (Section 7)", () => {
@@ -296,6 +399,12 @@ describe("buildFinancialContext — mentioned-asset enrichment", () => {
   it("does not enrich when the message mentions nothing from the catalog", async () => {
     const result = await buildFinancialContext({ userId: "u1", context: { type: "PORTFOLIO", source: "TRADING212" }, message: "Why did my portfolio fall today?", locale: "en" });
     expect(result.mentionedAsset).toBeUndefined();
+  });
+
+  it("fetches news at most once per request even when both the ASSET context and a mentioned-asset follow-up each need it (live reported cost risk: up to 8 uncached upstream calls per turn)", async () => {
+    getQuotes.mockResolvedValue([{ slug: "nvda", status: "ok", quote: { slug: "nvda", symbol: "NVDA", name: "NVIDIA Corp.", price: 500, change: 1, changePercent: 0.2, timestamp: Date.now() } }]);
+    await buildFinancialContext({ userId: "u1", context: { type: "ASSET", assetId: "aapl" }, message: "How does this compare to NVIDIA?", locale: "en" });
+    expect(getOrFetchNews).toHaveBeenCalledTimes(1);
   });
 });
 

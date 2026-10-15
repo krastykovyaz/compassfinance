@@ -96,6 +96,17 @@ export function Trading212ConnectModal({
         <p className="mt-2 text-[12px] leading-snug text-ink-faint">{t("trading212.connectReadOnlyNote")}</p>
         <p className="mt-2 text-[12px] leading-snug text-ink-faint">{t("trading212.connectWhereToFindKeys")}</p>
 
+        <details className="mt-3 rounded-2xl bg-surface-2 px-4 py-3 text-[12px] leading-snug text-ink-muted">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">{t("trading212.connectHelpTitle")}</summary>
+          <ul className="mt-2 list-disc space-y-1.5 pl-4">
+            <li>{t("trading212.connectHelpAccount")}</li>
+            <li>{t("trading212.connectHelpPermissions")}</li>
+            <li>{t("trading212.connectHelpSecret")}</li>
+            <li>{t("trading212.connectHelpIp")}</li>
+            <li>{t("trading212.connectHelpOneAccount")}</li>
+          </ul>
+        </details>
+
         <div className="mt-4 space-y-3">
           <div>
             <label className="text-[13px] font-medium text-ink-muted" htmlFor="t212-api-key">

@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/server/db/prisma";
-import { acquireSyncLock } from "@/server/brokerage/sync-lock";
+import { acquireSyncLock, releaseSyncLockAsFailed } from "@/server/brokerage/sync-lock";
 import {
   getDecryptedInteractiveBrokersCredentials,
   setInteractiveBrokersSelectedAccount,
@@ -155,7 +155,8 @@ async function finalizeFailure(
   connectionId: string,
   startedAt: Date,
   steps: { account: InteractiveBrokersSyncStepResult; positions: InteractiveBrokersSyncStepResult },
-  activity: InteractiveBrokersActivityStepResult = { status: "skipped", reason: "not_attempted" }
+  activity: InteractiveBrokersActivityStepResult = { status: "skipped", reason: "not_attempted" },
+  options?: { bestEffort?: boolean }
 ): Promise<InteractiveBrokersSyncResult> {
   const completedAt = new Date();
   const needsAttention = [steps.account, steps.positions].some(
@@ -166,15 +167,7 @@ async function finalizeFailure(
     .filter(Boolean)
     .join("; ");
 
-  await prisma.brokerageConnection.update({
-    where: { id: connectionId },
-    data: {
-      syncStatus: "FAILED",
-      syncError: message,
-      lastFailedSyncAt: completedAt,
-      ...(needsAttention ? { status: "ERROR" } : {}),
-    },
-  });
+  await releaseSyncLockAsFailed(connectionId, { syncError: message, lastFailedSyncAt: completedAt, needsAttention }, options);
 
   return {
     status: "failed",
@@ -250,78 +243,94 @@ export async function syncInteractiveBrokers(userId: string): Promise<Interactiv
     return { status: "already_syncing" };
   }
 
-  const discovery = await discoverInteractiveBrokersAccounts(userId);
-  if (!discovery.ok) {
-    return finalizeFailure(connection.id, startedAt, toSharedPrerequisiteFailure(discovery.reason, discovery.message));
-  }
-  const { accounts, authCredentials } = discovery;
+  // Everything from here on holds the lock (syncStatus="SYNCING"). Without
+  // this try/catch, an unexpected throw (a Prisma error, a decrypt
+  // failure not already reduced to a step result) left the connection
+  // wedged in SYNCING — with no syncError recorded — until
+  // IBKR_SYNC_STALE_LOCK_MINUTES elapsed, blocking every other sync
+  // attempt for that window and reporting a misleading "still syncing"
+  // status to the Portfolio panel and Compass alike. Any such failure is
+  // now recorded and the lock released immediately, exactly like every
+  // other designed failure path above/below — never a raw exception
+  // message forwarded to the client.
+  try {
+    const discovery = await discoverInteractiveBrokersAccounts(userId);
+    if (!discovery.ok) {
+      return await finalizeFailure(connection.id, startedAt, toSharedPrerequisiteFailure(discovery.reason, discovery.message));
+    }
+    const { accounts, authCredentials } = discovery;
 
-  const selection = selectInteractiveBrokersAccount(accounts, connection.externalAccountId);
-  if (selection.kind === "no_accounts") {
-    return finalizeFailure(connection.id, startedAt, {
-      account: { status: "failed", message: NO_ACCOUNTS_MESSAGE, category: "INVALID_RESPONSE" },
-      positions: { status: "failed", message: NO_ACCOUNTS_MESSAGE, category: "INVALID_RESPONSE" },
-    });
-  }
-  if (selection.kind === "needs_selection") {
+    const selection = selectInteractiveBrokersAccount(accounts, connection.externalAccountId);
+    if (selection.kind === "no_accounts") {
+      return await finalizeFailure(connection.id, startedAt, {
+        account: { status: "failed", message: NO_ACCOUNTS_MESSAGE, category: "INVALID_RESPONSE" },
+        positions: { status: "failed", message: NO_ACCOUNTS_MESSAGE, category: "INVALID_RESPONSE" },
+      });
+    }
+    if (selection.kind === "needs_selection") {
+      const completedAt = new Date();
+      // Not a credential problem — `status` (CONNECTED) is left untouched,
+      // only the sync outcome itself is recorded as needing the user's
+      // input, using the existing FAILED/syncError fields rather than a
+      // new state (Milestone: "reuse the existing BrokerageConnection
+      // status model only").
+      await prisma.brokerageConnection.update({
+        where: { id: connection.id },
+        data: { syncStatus: "FAILED", syncError: MULTIPLE_ACCOUNTS_MESSAGE, lastFailedSyncAt: completedAt },
+      });
+      return { status: "needs_account_selection", accounts: selection.accounts };
+    }
+
+    if (selection.accountId !== connection.externalAccountId) {
+      await setInteractiveBrokersSelectedAccount(userId, selection.accountId);
+    }
+
+    const account = await runAccountStep(userId, connection.id, selection.accountId, authCredentials);
+    const positions = await runPositionsStep(userId, connection.id, selection.accountId, authCredentials);
+    const steps = { account, positions };
+
+    if (account.status !== "success" || positions.status !== "success") {
+      // The activity step is never attempted when the prerequisites
+      // themselves failed — there'd be nothing meaningful to fetch
+      // activity FOR, and IBKR's own 15-minute rate limit is too precious
+      // to spend on a run that's already failing for an unrelated reason.
+      return await finalizeFailure(connection.id, startedAt, steps);
+    }
+
+    const activity = await runActivityStep(userId, connection.id, selection.accountId, authCredentials, connection.lastActivitySyncAt);
     const completedAt = new Date();
-    // Not a credential problem — `status` (CONNECTED) is left untouched,
-    // only the sync outcome itself is recorded as needing the user's
-    // input, using the existing FAILED/syncError fields rather than a
-    // new state (Milestone: "reuse the existing BrokerageConnection
-    // status model only").
+
+    // The activity step's own outcome NEVER affects `syncStatus`/`status`
+    // here — see InteractiveBrokersActivityStepResult's own doc comment:
+    // IBKR's 1-req/15-min rate limit on the one viable activity endpoint
+    // makes "skipped this run" the ROUTINE case, not a degraded sync, and
+    // account+positions succeeding is already a fully successful sync in
+    // the Phase 2 sense. lastActivitySyncAt is updated only when a REAL
+    // attempt was made (success or failure) — never on a skip, since no
+    // request was actually sent to IBKR that would need a cooldown.
     await prisma.brokerageConnection.update({
       where: { id: connection.id },
-      data: { syncStatus: "FAILED", syncError: MULTIPLE_ACCOUNTS_MESSAGE, lastFailedSyncAt: completedAt },
+      data: {
+        syncStatus: "SYNCED",
+        syncError: null,
+        lastSyncAt: completedAt,
+        status: "CONNECTED",
+        ...(activity.status !== "skipped" ? { lastActivitySyncAt: completedAt } : {}),
+      },
     });
-    return { status: "needs_account_selection", accounts: selection.accounts };
+    return {
+      status: "synced",
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      ...steps,
+      activity,
+    };
+  } catch (err) {
+    console.error("[interactive-brokers-sync] unexpected error mid-sync:", err);
+    const failure: InteractiveBrokersSyncStepResult = { status: "failed", message: "An unexpected error occurred while syncing.", category: "INTERNAL" };
+    return await finalizeFailure(connection.id, startedAt, { account: failure, positions: failure }, undefined, { bestEffort: true });
   }
-
-  if (selection.accountId !== connection.externalAccountId) {
-    await setInteractiveBrokersSelectedAccount(userId, selection.accountId);
-  }
-
-  const account = await runAccountStep(userId, connection.id, selection.accountId, authCredentials);
-  const positions = await runPositionsStep(userId, connection.id, selection.accountId, authCredentials);
-  const steps = { account, positions };
-
-  if (account.status !== "success" || positions.status !== "success") {
-    // The activity step is never attempted when the prerequisites
-    // themselves failed — there'd be nothing meaningful to fetch
-    // activity FOR, and IBKR's own 15-minute rate limit is too precious
-    // to spend on a run that's already failing for an unrelated reason.
-    return finalizeFailure(connection.id, startedAt, steps);
-  }
-
-  const activity = await runActivityStep(userId, connection.id, selection.accountId, authCredentials, connection.lastActivitySyncAt);
-  const completedAt = new Date();
-
-  // The activity step's own outcome NEVER affects `syncStatus`/`status`
-  // here — see InteractiveBrokersActivityStepResult's own doc comment:
-  // IBKR's 1-req/15-min rate limit on the one viable activity endpoint
-  // makes "skipped this run" the ROUTINE case, not a degraded sync, and
-  // account+positions succeeding is already a fully successful sync in
-  // the Phase 2 sense. lastActivitySyncAt is updated only when a REAL
-  // attempt was made (success or failure) — never on a skip, since no
-  // request was actually sent to IBKR that would need a cooldown.
-  await prisma.brokerageConnection.update({
-    where: { id: connection.id },
-    data: {
-      syncStatus: "SYNCED",
-      syncError: null,
-      lastSyncAt: completedAt,
-      status: "CONNECTED",
-      ...(activity.status !== "skipped" ? { lastActivitySyncAt: completedAt } : {}),
-    },
-  });
-  return {
-    status: "synced",
-    startedAt: startedAt.toISOString(),
-    completedAt: completedAt.toISOString(),
-    durationMs: completedAt.getTime() - startedAt.getTime(),
-    ...steps,
-    activity,
-  };
 }
 
 async function runAccountStep(
@@ -471,7 +480,14 @@ async function runActivityStep(
       const externalId = buildInteractiveBrokersTransactionExternalId(item);
 
       if (isInteractiveBrokersTradeType(item.type)) {
-        const side: "BUY" | "SELL" = item.quantity < 0 ? "SELL" : "BUY";
+        // Side comes from IBKR's own explicit "Buy"/"Sell" type string —
+        // isInteractiveBrokersTradeType just confirmed this row IS one of
+        // those two — never re-derived from the sign of `quantity`. A
+        // real, reported bug: relying on the quantity sign silently
+        // stores a Sell as a BUY the one time IBKR reports a signed
+        // quantity that doesn't happen to be negative (there is no
+        // documented guarantee it always is, only one worked example).
+        const side: "BUY" | "SELL" = item.type.toLowerCase() === "sell" ? "SELL" : "BUY";
         const magnitude = Math.abs(item.quantity);
         const fields = {
           compassAssetId: position.compassAssetId,
@@ -485,7 +501,13 @@ async function runActivityStep(
           quantity: magnitude,
           filledQuantity: magnitude,
           fillPrice: item.price,
-          filledValue: item.amount,
+          // IBKR's own `amt` is signed (negative for a Buy's cash
+          // outflow); filledValue is a gross notional magnitude
+          // everywhere else in this app (Trading 212 supplies it
+          // positive) — Math.abs it here so ActivityList never renders a
+          // buy as "-$750.00" while an equivalent Trading 212 buy shows
+          // positive.
+          filledValue: Math.abs(item.amount),
           currencyCode: item.currencyCode,
           externalCreatedAt: new Date(item.occurredAt),
         };

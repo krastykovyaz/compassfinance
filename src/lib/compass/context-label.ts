@@ -48,5 +48,7 @@ export function buildContextLabelParts(context: CompassContext, opts?: { assetNa
       return { prefixKey: "compass.contextIbkrConnection" };
     case "HYPERLIQUID_CONNECTION":
       return { prefixKey: "compass.contextHyperliquidConnection" };
+    case "CONNECTED_ACCOUNTS":
+      return { prefixKey: "compass.contextConnectedAccounts" };
   }
 }

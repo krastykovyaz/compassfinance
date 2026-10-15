@@ -13,12 +13,28 @@
 
 import { requireUserId } from "@/server/auth/session";
 import { withApiErrorHandling } from "@/server/api-helpers";
+import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { isValidEvmAddress } from "@/server/validation";
 import { getHyperliquidAccount, getHyperliquidOpenOrders, getHyperliquidUserFills } from "@/server/hyperliquid/service";
 
+// Not exported: a Next.js route module may only export its handlers and route config.
+const HYPERLIQUID_ACCOUNT_MAX_REQUESTS_PER_MINUTE = 120;
+
 export async function GET(req: Request) {
   return withApiErrorHandling(async () => {
-    await requireUserId(); // auth gate only — never forwarded
+    const userId = await requireUserId(); // auth gate only — never forwarded
+
+    // Bundles three real upstream Hyperliquid requests per call, so a
+    // runaway client loop must not be able to hammer it. The ceiling is far
+    // above the limiter's default on purpose: this route is POLLED. One
+    // trading page runs two account panels (main dex + xyz) at one request
+    // each per 30s, and confirming a transfer adds a burst of up to eight
+    // more within ten seconds — the default of 12/minute was reached by
+    // ordinary use with two tabs open, which blanked both panels and made a
+    // transfer that had succeeded report as unconfirmed.
+    if (!checkRateLimit(`hyperliquid-account:${userId}`, { max: HYPERLIQUID_ACCOUNT_MAX_REQUESTS_PER_MINUTE })) {
+      throw new Error("Too many requests — please wait a moment before trying again.");
+    }
 
     const url = new URL(req.url);
     const address = url.searchParams.get("address");

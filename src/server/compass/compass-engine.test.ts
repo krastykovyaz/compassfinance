@@ -111,17 +111,17 @@ describe("compassChat — output-side safety net", () => {
 });
 
 describe("compassChat — DeepSeek error handling (Section 39)", () => {
-  it("surfaces a provider failure as a typed result without persisting an assistant message", async () => {
+  it("surfaces a provider failure as a typed result without persisting an assistant message, but includes the conversationId so a retry can append instead of orphaning a new conversation", async () => {
     completeMock.mockResolvedValue({ ok: false, kind: "timeout", latencyMs: 100 });
     const result = await compassChat({ userId: "u1", message: "What are the risks in my portfolio?", context: { type: "HOME" }, locale: "en" });
-    expect(result).toEqual({ ok: false, kind: "timeout" });
+    expect(result).toEqual({ ok: false, kind: "timeout", conversationId: "conv-1" });
     expect(appendCompassMessage).not.toHaveBeenCalled();
   });
 
   it("surfaces malformed JSON from DeepSeek as invalid_response", async () => {
     completeMock.mockResolvedValue({ ok: true, text: "not valid json", latencyMs: 50 });
     const result = await compassChat({ userId: "u1", message: "What are the risks in my portfolio?", context: { type: "HOME" }, locale: "en" });
-    expect(result).toEqual({ ok: false, kind: "invalid_response" });
+    expect(result).toEqual({ ok: false, kind: "invalid_response", conversationId: "conv-1" });
   });
 });
 
@@ -147,6 +147,30 @@ describe("compassChat — conversation lifecycle (Section 23/45)", () => {
     const result = await compassChat({ userId: "attacker", conversationId: "someone-elses-conv", message: "Hi", context: { type: "HOME" }, locale: "en" });
     expect(result).toEqual({ ok: false, kind: "conversation_not_found" });
     expect(completeMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the conversation's OWN stored context for a follow-up, never the fresh per-request context — a live reported bug where a thread could silently drift topic mid-conversation", async () => {
+    getCompassConversation.mockResolvedValue({
+      id: "conv-1",
+      userId: "u1",
+      context: { type: "ASSET", assetId: "nvda" },
+      createdAt: "t",
+      updatedAt: "t",
+      messages: [],
+    });
+    deepSeekOk({ text: "ok", blocks: [], suggestedFollowUps: [] });
+    // The client sends a DIFFERENT context than the thread was created
+    // with (e.g. the user navigated to Portfolio while the sheet, which
+    // lives in the root layout, stayed open).
+    await compassChat({ userId: "u1", conversationId: "conv-1", message: "What about its risks?", context: { type: "PORTFOLIO", source: "TRADING212" }, locale: "en" });
+    expect(buildFinancialContext).toHaveBeenCalledWith(expect.objectContaining({ context: { type: "ASSET", assetId: "nvda" } }));
+  });
+
+  it("falls back to the per-request context only if the stored conversation's own context is null (defensive, should not happen for a well-formed row)", async () => {
+    getCompassConversation.mockResolvedValue({ id: "conv-1", userId: "u1", context: null, createdAt: "t", updatedAt: "t", messages: [] });
+    deepSeekOk({ text: "ok", blocks: [], suggestedFollowUps: [] });
+    await compassChat({ userId: "u1", conversationId: "conv-1", message: "Hi", context: { type: "PORTFOLIO", source: "IBKR" }, locale: "en" });
+    expect(buildFinancialContext).toHaveBeenCalledWith(expect.objectContaining({ context: { type: "PORTFOLIO", source: "IBKR" } }));
   });
 
   it("passes prior conversation history into the financial-context builder's caller data (via the message-building path) for follow-up continuity", async () => {

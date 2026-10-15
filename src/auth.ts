@@ -42,17 +42,14 @@ export const authConfig: NextAuthConfig = {
   // env-var pickup — same effective behavior, but failures are traceable
   // to this exact line instead of "somewhere inside NextAuth()".
   secret: authSecret,
-  // Keep the underlying adapter failure visible during local development.
-  // Auth.js otherwise wraps database errors as a generic AdapterError, which
-  // makes a missing/unmigrated local SQLite schema unnecessarily hard to
-  // diagnose. Do not expose database details to clients.
-  logger: {
-    error(error) {
-      // TEMP diagnostic logging — revert after debugging the production
-      // sign-in failure on compassfinance.online.
-      console.error("[auth:adapter]", error);
-    },
-  },
+  // No custom `logger.error` override — Auth.js's own default already logs
+  // adapter failures server-side without a client-facing leak. A verbose
+  // override was added here temporarily to debug a specific production
+  // sign-in failure; it printed the raw adapter error object (which can
+  // carry emails or database error text) to the systemd service's
+  // persistent logs unconditionally, including in production, well after
+  // that investigation was done. Removed — do not re-add a raw error dump
+  // without redacting `error.cause`/`error.message` first.
   // Prisma's generated client type lives at a custom output path
   // (see prisma/schema.prisma), so it isn't structurally identical to the
   // `@prisma/client` type @auth/prisma-adapter imports for its signature —

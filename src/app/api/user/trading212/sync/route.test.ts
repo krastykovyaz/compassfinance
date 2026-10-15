@@ -11,14 +11,37 @@ vi.mock("@/server/trading212/trading212-sync", () => ({
   syncTrading212: (...args: unknown[]) => syncTrading212(...args),
 }));
 
+const checkRateLimit = vi.fn();
+vi.mock("@/lib/ai/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
+}));
+
 import { POST } from "./route";
 
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  checkRateLimit.mockReturnValue(true);
 });
 
 describe("POST /api/user/trading212/sync", () => {
+  it("rejects when rate-limited, without ever calling syncTrading212", async () => {
+    checkRateLimit.mockReturnValue(false);
+
+    const res = await POST();
+
+    expect(res.status).toBe(400);
+    expect(syncTrading212).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits per signed-in user, never per client-supplied header", async () => {
+    syncTrading212.mockResolvedValue({ status: "synced" });
+
+    await POST();
+
+    expect(checkRateLimit).toHaveBeenCalledWith("trading212-sync:user-1");
+  });
+
   it("returns 401 when unauthenticated", async () => {
     const { UnauthenticatedError } = await import("@/server/auth/session");
     requireUserId.mockRejectedValue(new UnauthenticatedError());

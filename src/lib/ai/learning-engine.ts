@@ -59,6 +59,13 @@ async function runTutorOperation(params: {
     }
   }
 
+  // expectJson: true already defaults DeepSeekProvider to
+  // disableReasoning — a deterministic structured-output task
+  // (title/explanation/keyPoints), not open-ended deliberation. Without
+  // it, DeepSeek's reasoning pass competes with the actual answer for the
+  // same maxTokens budget and can consume all of it, returning
+  // empty/unparseable content (see deepseek-provider.ts's own comment for
+  // the live-reproduced version of this failure).
   const result = await getAIProvider().complete({
     systemPrompt: system,
     userPrompt: user,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const requireUserId = vi.fn();
@@ -42,6 +42,21 @@ beforeEach(() => {
 function locationOf(res: Response): string {
   return res.headers.get("location") ?? "";
 }
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("GET /api/user/interactive-brokers/oauth/callback — redirects stay on the public site", () => {
+  it("returns the browser to the public Connected accounts page, not to the server's own address", async () => {
+    vi.stubEnv("AUTH_URL", "https://compassfinance.online/api/auth");
+    const proxied = new NextRequest("https://localhost:3002/api/user/interactive-brokers/oauth/callback?oauth_token=req-tok");
+
+    const res = await GET(proxied);
+
+    expect(locationOf(res)).toBe("https://compassfinance.online/profile/connected-accounts?ibkr=error&reason=denied");
+  });
+});
 
 describe("GET /api/user/interactive-brokers/oauth/callback", () => {
   it("redirects with reason=denied when oauth_token or oauth_verifier is missing (user cancelled/denied)", async () => {

@@ -14,8 +14,47 @@ import { encrypt, decrypt } from "@/server/security/encryption";
 
 const PROVIDER = "INTERACTIVE_BROKERS";
 
+// A connection to Interactive Brokers can be made two ways, and both live in
+// the same row (one IBKR connection per user):
+//   "oauth" - the vendor OAuth 1.0a flow. encryptedApiKey/encryptedApiSecret
+//             hold the Access Token and Access Token Secret as plain strings.
+//   "flex"  - the personal-account route: a Flex Web Service token plus the
+//             Flex Query ID the user created. encryptedApiKey holds a small
+//             tagged JSON envelope, so the two kinds can never be confused
+//             and the database layout does not change. encryptedApiSecret
+//             holds a constant placeholder (the column is not nullable).
+export type InteractiveBrokersConnectionMethod = "oauth" | "flex";
+
+type FlexEnvelope = { v: 1; kind: "flex"; token: string; queryId: string };
+
+const FLEX_SECRET_PLACEHOLDER = "flex-report-token";
+
+function readFlexEnvelope(plaintextApiKey: string): FlexEnvelope | null {
+  if (!plaintextApiKey.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(plaintextApiKey) as Partial<FlexEnvelope>;
+    if (parsed.v === 1 && parsed.kind === "flex" && typeof parsed.token === "string" && typeof parsed.queryId === "string") {
+      return parsed as FlexEnvelope;
+    }
+  } catch {
+    // Not an envelope: an ordinary OAuth Access Token.
+  }
+  return null;
+}
+
+function methodOf(encryptedApiKey: string): InteractiveBrokersConnectionMethod {
+  try {
+    return readFlexEnvelope(decrypt(encryptedApiKey)) ? "flex" : "oauth";
+  } catch {
+    // An undecryptable value (for example after an encryption-key change)
+    // is reported as the default; syncing it will fail with its own error.
+    return "oauth";
+  }
+}
+
 export type InteractiveBrokersConnectionDTO = {
   status: "CONNECTED" | "DISCONNECTED" | "ERROR";
+  method: InteractiveBrokersConnectionMethod;
   createdAt: string;
   updatedAt: string;
   lastConnectedAt: string | null;
@@ -23,12 +62,14 @@ export type InteractiveBrokersConnectionDTO = {
 
 function toDTO(row: {
   status: string;
+  encryptedApiKey: string;
   createdAt: Date;
   updatedAt: Date;
   lastConnectedAt: Date | null;
 }): InteractiveBrokersConnectionDTO {
   return {
     status: row.status as InteractiveBrokersConnectionDTO["status"],
+    method: methodOf(row.encryptedApiKey),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastConnectedAt: row.lastConnectedAt ? row.lastConnectedAt.toISOString() : null,
@@ -94,6 +135,40 @@ export async function completeInteractiveBrokersOAuthConnection(
   return toDTO(row);
 }
 
+/** Stores a Flex token and query ID after the caller has checked them with
+ * Interactive Brokers (see the Flex connect route). Same one-row-per-user
+ * upsert as the OAuth connection: connecting this way replaces an earlier
+ * OAuth connection, and the other way round. The account id is cleared
+ * because it is learned again from the first report. */
+export async function connectInteractiveBrokersFlex(
+  userId: string,
+  credentials: { token: string; queryId: string }
+): Promise<InteractiveBrokersConnectionDTO> {
+  const now = new Date();
+  const envelope: FlexEnvelope = { v: 1, kind: "flex", token: credentials.token, queryId: credentials.queryId };
+  const encryptedApiKey = encrypt(JSON.stringify(envelope));
+  const encryptedApiSecret = encrypt(FLEX_SECRET_PLACEHOLDER);
+  const row = await prisma.brokerageConnection.upsert({
+    where: { userId_provider: { userId, provider: PROVIDER } },
+    create: { userId, provider: PROVIDER, encryptedApiKey, encryptedApiSecret, externalAccountId: null, status: "CONNECTED", lastConnectedAt: now },
+    update: { encryptedApiKey, encryptedApiSecret, externalAccountId: null, status: "CONNECTED", lastConnectedAt: now },
+  });
+  return toDTO(row);
+}
+
+/** The Flex token and query ID, or null when the user has no connection or
+ * connected the OAuth way. Never exposed through an API route. */
+export async function getDecryptedInteractiveBrokersFlexCredentials(
+  userId: string
+): Promise<{ token: string; queryId: string } | null> {
+  const row = await prisma.brokerageConnection.findUnique({
+    where: { userId_provider: { userId, provider: PROVIDER } },
+  });
+  if (!row) return null;
+  const envelope = readFlexEnvelope(decrypt(row.encryptedApiKey));
+  return envelope ? { token: envelope.token, queryId: envelope.queryId } : null;
+}
+
 /** Deletes the stored (encrypted) OAuth credentials entirely. This never
  * calls Interactive Brokers itself — the official OAuth 1.0a third-party
  * workflow (see docs/integrations/interactive-brokers-phase-0.md §3.I)
@@ -124,8 +199,12 @@ export async function getDecryptedInteractiveBrokersCredentials(
     where: { userId_provider: { userId, provider: PROVIDER } },
   });
   if (!row) return null;
+  const accessToken = decrypt(row.encryptedApiKey);
+  // A Flex connection stores an envelope here, not an Access Token: it is
+  // not an OAuth connection and must never be sent to the OAuth endpoints.
+  if (readFlexEnvelope(accessToken)) return null;
   return {
-    accessToken: decrypt(row.encryptedApiKey),
+    accessToken,
     accessTokenSecret: decrypt(row.encryptedApiSecret),
   };
 }

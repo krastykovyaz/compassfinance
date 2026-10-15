@@ -15,6 +15,11 @@ vi.mock("@/server/hyperliquid/service", () => ({
   getHyperliquidUserFills: (...args: unknown[]) => getHyperliquidUserFills(...args),
 }));
 
+const checkRateLimit = vi.fn();
+vi.mock("@/lib/ai/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
+}));
+
 import { GET } from "./route";
 
 const ADDRESS = "0x1234567890123456789012345678901234567890";
@@ -30,12 +35,34 @@ function request(address?: string, dex?: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  checkRateLimit.mockReturnValue(true);
   getHyperliquidAccount.mockResolvedValue({ status: "ok", account: { positions: [] } });
   getHyperliquidOpenOrders.mockResolvedValue({ status: "ok", orders: [] });
   getHyperliquidUserFills.mockResolvedValue({ status: "ok", fills: [] });
 });
 
 describe("GET /api/hyperliquid/account", () => {
+  it("rejects when rate-limited, without calling the Hyperliquid service", async () => {
+    checkRateLimit.mockReturnValue(false);
+
+    const res = await GET(request(ADDRESS));
+
+    expect(res.status).toBe(400);
+    expect(getHyperliquidAccount).not.toHaveBeenCalled();
+  });
+
+  it("uses a per-user ceiling well above the limiter's default, because this route is polled (two panels per page plus transfer-confirmation bursts)", async () => {
+    await GET(request(ADDRESS));
+
+    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    const [key, options] = checkRateLimit.mock.calls[0] as [string, { max: number }];
+    expect(key).toBe("hyperliquid-account:user-1");
+    // One page = 4 requests/minute of background polling; a transfer adds 8
+    // within ten seconds. Three tabs plus a transfer is 20 — the ceiling
+    // must leave ordinary use nowhere near it.
+    expect(options.max).toBeGreaterThanOrEqual(60);
+  });
+
   it("401s a signed-out request without ever calling the Hyperliquid service", async () => {
     const { UnauthenticatedError } = await import("@/server/auth/session");
     requireUserId.mockRejectedValue(new UnauthenticatedError());

@@ -12,7 +12,7 @@ export function InviteLanding({ valid, locale }: { valid: boolean; locale: Local
   const t = (key: string) => translate(locale, key);
 
   return (
-    <div className="flex min-h-dvh flex-col justify-center gap-8 bg-canvas px-6 py-10">
+    <div className="flex min-h-app flex-col justify-center gap-8 bg-canvas px-6 py-10">
       <div className="flex flex-col items-center gap-3 text-center">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-ink text-surface">
           <CompassIcon size={28} />

@@ -208,6 +208,23 @@ describe("syncTrading212 — locking (Requirement 4)", () => {
     expect(result.status).toBe("synced");
   });
 
+  it("releases the sync lock and records a failure on a genuinely unexpected exception, instead of leaving the connection wedged in SYNCING for the whole stale-lock window (a live reported gap: no try/finally around the locked section)", async () => {
+    seedConnection("user-1");
+    getAccountSummary.mockRejectedValue(new Error("unexpected: something blew up"));
+
+    const result = await syncTrading212("user-1");
+
+    expect(result.status).toBe("failed");
+    const stored = connectionRows.get("user-1")!;
+    expect(stored.syncStatus).toBe("FAILED");
+    expect(stored.syncError).not.toContain("unexpected: something blew up"); // never the raw exception message
+    expect(stored.syncStatus).not.toBe("SYNCING"); // lock released, not wedged
+
+    getAccountSummary.mockResolvedValue({ ok: true, data: { currencyCode: "USD", totalValue: 1000, cashAvailable: 0, cashInPies: 0, cashReserved: 0, investedValue: 1000, realizedPnl: 0, unrealizedPnl: 0 } });
+    const retry = await syncTrading212("user-1");
+    expect(retry.status).not.toBe("already_syncing");
+  });
+
   it("two concurrent sync attempts for the same connection: exactly one proceeds, the other sees already_syncing", async () => {
     seedConnection("user-1");
     // Simulate genuine concurrency: both calls race to acquire the lock

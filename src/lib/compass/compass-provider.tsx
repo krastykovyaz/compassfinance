@@ -3,6 +3,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { encodeContextKey, type CompassContext } from "./context";
 import { CompassEntryButton } from "@/components/compass/compass-entry-button";
+import { ScreenTips } from "@/components/tips/screen-tips";
 import { CompassSheet } from "@/components/compass/compass-sheet";
 
 // Compass is NOT a bottom-navigation tab (Phase 4, Section 28) — it is a
@@ -42,6 +43,7 @@ export function CompassProvider({ children }: { children: ReactNode }) {
     <CompassUiContext.Provider value={value}>
       {children}
       <CompassEntryButton />
+      <ScreenTips />
       <CompassSheet />
     </CompassUiContext.Provider>
   );

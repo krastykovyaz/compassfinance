@@ -8,6 +8,7 @@ describe("parseCompassContext", () => {
     expect(parseCompassContext({ type: "TRADING212_CONNECTION" })).toEqual({ type: "TRADING212_CONNECTION" });
     expect(parseCompassContext({ type: "IBKR_CONNECTION" })).toEqual({ type: "IBKR_CONNECTION" });
     expect(parseCompassContext({ type: "HYPERLIQUID_CONNECTION" })).toEqual({ type: "HYPERLIQUID_CONNECTION" });
+    expect(parseCompassContext({ type: "CONNECTED_ACCOUNTS" })).toEqual({ type: "CONNECTED_ACCOUNTS" });
     expect(parseCompassContext({ type: "PORTFOLIO", source: "IBKR" })).toEqual({ type: "PORTFOLIO", source: "IBKR" });
     expect(parseCompassContext({ type: "NEWS", articleId: "abc-123" })).toEqual({ type: "NEWS", articleId: "abc-123" });
     expect(parseCompassContext({ type: "NEWS" })).toEqual({ type: "NEWS" }); // browsing the feed, no article selected yet

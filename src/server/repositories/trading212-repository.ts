@@ -78,7 +78,7 @@ export async function connectTrading212(
     // that ever drifts.
     const message =
       validation.reason === "unauthorized"
-        ? "Trading 212 rejected these credentials — double-check your API Key and API Secret."
+        ? "Trading 212 rejected these credentials — check that the API Key and API Secret are copied exactly, that the key has the Account data, Portfolio and History permissions, that \"IP address restrictions\" is empty, and that it was created in an Invest or Stocks & Shares ISA account."
         : validation.reason === "rate_limited"
           ? "Trading 212 is rate-limiting requests right now — try again shortly."
           : "Couldn't verify these credentials with Trading 212 — try again shortly.";

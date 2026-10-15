@@ -29,8 +29,12 @@ export type AICompletionRequest = {
    * can silently consume the entire token budget and return truncated,
    * unparseable output (observed live: `reasoning_tokens` alone exceeded
    * a 700-token cap, leaving zero tokens for the actual JSON — see
-   * compass-engine.ts, the first caller to set this). Leave unset for
-   * callers happy with the provider's default behavior. */
+   * compass-engine.ts, the first caller to hit this). Leave unset to get
+   * DeepSeekProvider's own default, which disables reasoning whenever
+   * `expectJson` is true (every current JSON-mode caller wants a
+   * deterministic response, never open-ended deliberation) — pass `false`
+   * explicitly to opt back into reasoning for a JSON-mode call that
+   * genuinely wants it. */
   disableReasoning?: boolean;
 };
 

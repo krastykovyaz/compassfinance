@@ -76,8 +76,10 @@ vi.mock("@/server/db/prisma", () => ({
 
 import {
   completeInteractiveBrokersOAuthConnection,
+  connectInteractiveBrokersFlex,
   disconnectInteractiveBrokers,
   getDecryptedInteractiveBrokersCredentials,
+  getDecryptedInteractiveBrokersFlexCredentials,
   getInteractiveBrokersConnection,
   setInteractiveBrokersSelectedAccount,
 } from "./interactive-brokers-repository";
@@ -178,7 +180,7 @@ describe("getInteractiveBrokersConnection — never returns credential fields, a
     expect(connection).not.toHaveProperty("accessToken");
     expect(connection).not.toHaveProperty("accessTokenSecret");
     expect(connection).not.toHaveProperty("externalAccountId");
-    expect(Object.keys(connection!).sort()).toEqual(["createdAt", "lastConnectedAt", "status", "updatedAt"].sort());
+    expect(Object.keys(connection!).sort()).toEqual(["createdAt", "lastConnectedAt", "method", "status", "updatedAt"].sort());
   });
 
   it("user A cannot see user B's connection", async () => {
@@ -270,5 +272,64 @@ describe("getDecryptedInteractiveBrokersCredentials", () => {
 
   it("returns null for a user with no connection", async () => {
     expect(await getDecryptedInteractiveBrokersCredentials("user-1")).toBeNull();
+  });
+});
+
+describe("Flex connection (the personal-account route)", () => {
+  it("stores a CONNECTED row with the token and query id encrypted, never as plaintext", async () => {
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+
+    const row = store.get(key("user-1", "INTERACTIVE_BROKERS"))!;
+    expect(row.status).toBe("CONNECTED");
+    expect(row.encryptedApiKey).not.toContain("FLEXSECRETTOKEN99");
+    expect(row.encryptedApiKey).not.toContain("424242");
+    expect(row.encryptedApiSecret).not.toContain("flex");
+  });
+
+  it("round-trips the token and query id for the owning user", async () => {
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+
+    expect(await getDecryptedInteractiveBrokersFlexCredentials("user-1")).toEqual({ token: "FLEXSECRETTOKEN99", queryId: "424242" });
+  });
+
+  it("is not an OAuth connection: its stored value must never be handed to the OAuth endpoints as an Access Token", async () => {
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+
+    expect(await getDecryptedInteractiveBrokersCredentials("user-1")).toBeNull();
+  });
+
+  it("has no Flex credentials for an OAuth connection or for nobody", async () => {
+    await completeInteractiveBrokersOAuthConnection("user-1", "real-access-token", "real-access-token-secret");
+
+    expect(await getDecryptedInteractiveBrokersFlexCredentials("user-1")).toBeNull();
+    expect(await getDecryptedInteractiveBrokersFlexCredentials("nobody")).toBeNull();
+  });
+
+  it("reports how the account was connected, without exposing any credential", async () => {
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+    await completeInteractiveBrokersOAuthConnection("user-2", "real-access-token", "real-access-token-secret");
+
+    expect((await getInteractiveBrokersConnection("user-1"))?.method).toBe("flex");
+    expect((await getInteractiveBrokersConnection("user-2"))?.method).toBe("oauth");
+    expect(JSON.stringify(await getInteractiveBrokersConnection("user-1"))).not.toContain("FLEXSECRETTOKEN99");
+  });
+
+  it("connecting this way replaces an earlier connection of the other kind (one IBKR connection per user) and clears the account id", async () => {
+    await completeInteractiveBrokersOAuthConnection("user-1", "real-access-token", "real-access-token-secret");
+    await setInteractiveBrokersSelectedAccount("user-1", "U111");
+
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+
+    expect(store.size).toBe(1);
+    expect(store.get(key("user-1", "INTERACTIVE_BROKERS"))!.externalAccountId).toBeNull();
+    expect((await getInteractiveBrokersConnection("user-1"))?.method).toBe("flex");
+  });
+
+  it("never touches another user's connection", async () => {
+    await completeInteractiveBrokersOAuthConnection("user-2", "other-token", "other-secret");
+
+    await connectInteractiveBrokersFlex("user-1", { token: "FLEXSECRETTOKEN99", queryId: "424242" });
+
+    expect(await getDecryptedInteractiveBrokersCredentials("user-2")).toEqual({ accessToken: "other-token", accessTokenSecret: "other-secret" });
   });
 });

@@ -7,8 +7,13 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 const syncInteractiveBrokers = vi.fn();
-vi.mock("@/server/interactive-brokers/interactive-brokers-sync", () => ({
-  syncInteractiveBrokers: (...args: unknown[]) => syncInteractiveBrokers(...args),
+vi.mock("@/server/interactive-brokers/interactive-brokers-flex-sync", () => ({
+  syncInteractiveBrokersForUser: (...args: unknown[]) => syncInteractiveBrokers(...args),
+}));
+
+const checkRateLimit = vi.fn();
+vi.mock("@/lib/ai/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
 }));
 
 import { POST } from "./route";
@@ -16,9 +21,17 @@ import { POST } from "./route";
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  checkRateLimit.mockReturnValue(true);
 });
 
 describe("POST /api/user/interactive-brokers/sync", () => {
+  it("rejects when rate-limited, without ever calling syncInteractiveBrokers", async () => {
+    checkRateLimit.mockReturnValue(false);
+    const res = await POST();
+    expect(res.status).toBe(400);
+    expect(syncInteractiveBrokers).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when unauthenticated", async () => {
     const { UnauthenticatedError } = await import("@/server/auth/session");
     requireUserId.mockRejectedValue(new UnauthenticatedError());

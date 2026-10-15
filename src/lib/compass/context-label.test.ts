@@ -6,6 +6,7 @@ describe("buildContextLabelParts", () => {
     expect(buildContextLabelParts({ type: "HOME" })).toEqual({ prefixKey: "compass.contextHome" });
     expect(buildContextLabelParts({ type: "PROFILE" })).toEqual({ prefixKey: "compass.contextProfile" });
     expect(buildContextLabelParts({ type: "TRADING212_CONNECTION" })).toEqual({ prefixKey: "compass.contextTrading212Connection" });
+    expect(buildContextLabelParts({ type: "CONNECTED_ACCOUNTS" })).toEqual({ prefixKey: "compass.contextConnectedAccounts" });
   });
 
   it("PORTFOLIO carries a translated source suffix key matching the given source (Section 28's 'Portfolio · Trading 212' example)", () => {

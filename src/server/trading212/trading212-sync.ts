@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/server/db/prisma";
-import { acquireSyncLock } from "@/server/brokerage/sync-lock";
+import { acquireSyncLock, releaseSyncLockAsFailed } from "@/server/brokerage/sync-lock";
 import { getDecryptedTrading212Credentials } from "@/server/repositories/trading212-repository";
 import { trading212Provider } from "./trading212-provider";
 import { mapTrading212TickerToAssetId } from "./trading212-asset-mapping";
@@ -103,50 +103,74 @@ export async function syncTrading212(userId: string): Promise<Trading212SyncResu
     return { status: "already_syncing" };
   }
 
-  const steps = await runSteps(userId, connection.id, credentials);
-  const completedAt = new Date();
-  const failedSteps = (Object.entries(steps) as [Trading212SyncStepName, Trading212SyncStepResult][]).filter(
-    ([, r]) => r.status === "failed"
-  );
-  const allSucceeded = failedSteps.length === 0;
+  // Everything from here on holds the lock (syncStatus="SYNCING"). Without
+  // this try/catch, an unexpected throw (e.g. a Prisma error) left the
+  // connection wedged in SYNCING — with no syncError recorded — until the
+  // stale-lock window elapsed, blocking every other sync attempt and
+  // reporting a misleading "still syncing" status in the meantime. Any
+  // such failure is now recorded and the lock released immediately, same
+  // as every designed failure path below — never a raw exception message
+  // forwarded to the client.
+  try {
+    const steps = await runSteps(userId, connection.id, credentials);
+    const completedAt = new Date();
+    const failedSteps = (Object.entries(steps) as [Trading212SyncStepName, Trading212SyncStepResult][]).filter(
+      ([, r]) => r.status === "failed"
+    );
+    const allSucceeded = failedSteps.length === 0;
 
-  if (allSucceeded) {
-    await prisma.brokerageConnection.update({
-      where: { id: connection.id },
-      data: { syncStatus: "SYNCED", syncError: null, lastSyncAt: completedAt, status: "CONNECTED" },
-    });
-    logSyncOutcome({ connectionId: connection.id, startedAt, completedAt, steps, ok: true });
-    return { status: "synced", startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - startedAt.getTime(), ...steps };
+    if (allSucceeded) {
+      await prisma.brokerageConnection.update({
+        where: { id: connection.id },
+        data: { syncStatus: "SYNCED", syncError: null, lastSyncAt: completedAt, status: "CONNECTED" },
+      });
+      logSyncOutcome({ connectionId: connection.id, startedAt, completedAt, steps, ok: true });
+      return { status: "synced", startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - startedAt.getTime(), ...steps };
+    }
+
+    // Requirement 12: only an AUTHENTICATION/PERMISSION failure means the
+    // credentials themselves are the problem — that's the one case where
+    // the connection is flagged as needing the user's attention. Every
+    // other failure category is transient/environmental and leaves
+    // `status` (CONNECTED) untouched, so the scheduler keeps retrying it
+    // on the normal cadence.
+    const needsAttention = failedSteps.some(([, r]) => r.status === "failed" && isCredentialInvalidatingCategory(r.category));
+    const message = summarizeFailures(failedSteps);
+
+    await releaseSyncLockAsFailed(connection.id, { syncError: message, lastFailedSyncAt: completedAt, needsAttention });
+    logSyncOutcome({ connectionId: connection.id, startedAt, completedAt, steps, ok: false });
+
+    return {
+      status: "failed",
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      message,
+      ...steps,
+    };
+  } catch (err) {
+    console.error("[trading212-sync] unexpected error mid-sync:", err);
+    const completedAt = new Date();
+    const message = "An unexpected error occurred while syncing.";
+    await releaseSyncLockAsFailed(
+      connection.id,
+      { syncError: message, lastFailedSyncAt: completedAt, needsAttention: false },
+      { bestEffort: true }
+    );
+    const failure: Trading212SyncStepResult = { status: "failed", message, category: "INTERNAL" };
+    return {
+      status: "failed",
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      message,
+      account: failure,
+      positions: failure,
+      orders: failure,
+      dividends: failure,
+      transactions: failure,
+    };
   }
-
-  // Requirement 12: only an AUTHENTICATION/PERMISSION failure means the
-  // credentials themselves are the problem — that's the one case where
-  // the connection is flagged as needing the user's attention. Every
-  // other failure category is transient/environmental and leaves
-  // `status` (CONNECTED) untouched, so the scheduler keeps retrying it
-  // on the normal cadence.
-  const needsAttention = failedSteps.some(([, r]) => r.status === "failed" && isCredentialInvalidatingCategory(r.category));
-  const message = summarizeFailures(failedSteps);
-
-  await prisma.brokerageConnection.update({
-    where: { id: connection.id },
-    data: {
-      syncStatus: "FAILED",
-      syncError: message,
-      lastFailedSyncAt: completedAt,
-      ...(needsAttention ? { status: "ERROR" } : {}),
-    },
-  });
-  logSyncOutcome({ connectionId: connection.id, startedAt, completedAt, steps, ok: false });
-
-  return {
-    status: "failed",
-    startedAt: startedAt.toISOString(),
-    completedAt: completedAt.toISOString(),
-    durationMs: completedAt.getTime() - startedAt.getTime(),
-    message,
-    ...steps,
-  };
 }
 
 function summarizeFailures(failedSteps: [Trading212SyncStepName, Trading212SyncStepResult][]): string {

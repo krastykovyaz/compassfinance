@@ -31,6 +31,19 @@ describe("compassChatReducer", () => {
     expect(next.messages).toEqual([userMessage]);
   });
 
+  it("SEND_ERROR adopts the server's conversationId when one comes back, so a retry appends instead of creating a new conversation (live reported bug: a failed first message orphaned a fresh conversation on every retry)", () => {
+    const afterStart = compassChatReducer(INITIAL_COMPASS_CHAT_STATE, { type: "SEND_START", message: userMessage });
+    const next = compassChatReducer(afterStart, { type: "SEND_ERROR", reason: "invalid_response", conversationId: "conv-1" });
+    expect(next.conversationId).toBe("conv-1");
+  });
+
+  it("SEND_ERROR keeps the existing conversationId when the server didn't return one (e.g. a network error before any response)", () => {
+    const withConv: CompassChatState = { ...INITIAL_COMPASS_CHAT_STATE, conversationId: "conv-1" };
+    const afterStart = compassChatReducer(withConv, { type: "SEND_START", message: userMessage });
+    const next = compassChatReducer(afterStart, { type: "SEND_ERROR", reason: "network_error" });
+    expect(next.conversationId).toBe("conv-1");
+  });
+
   it("a conversation can continue after an error — a later SEND_START/SEND_SUCCESS still appends correctly", () => {
     const afterStart = compassChatReducer(INITIAL_COMPASS_CHAT_STATE, { type: "SEND_START", message: userMessage });
     const afterError = compassChatReducer(afterStart, { type: "SEND_ERROR", reason: "timeout" });

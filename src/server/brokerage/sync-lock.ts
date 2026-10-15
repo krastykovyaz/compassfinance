@@ -36,3 +36,48 @@ export async function acquireSyncLock(connectionId: string, staleLockMs: number)
   });
   return result.count === 1;
 }
+
+// Records a sync as FAILED and releases the lock. One implementation shared
+// by trading212-sync.ts and interactive-brokers-sync.ts (each used to carry
+// its own copy).
+//
+// updateMany, not update, on purpose: a disconnect does a hard deleteMany on
+// BrokerageConnection, so the row can vanish while a sync is failing.
+// `update` throws "record not found" in that case; `updateMany` simply
+// matches nothing, which is the correct outcome (there is no lock left to
+// release) and needs no error handling at all.
+//
+// Every OTHER database error still throws by default. An earlier version
+// caught everything here, which also hid transient failures (SQLITE_BUSY):
+// the caller then reported "failed" while the row stayed SYNCING with no
+// error recorded, blocking every sync until the stale-lock window passed.
+// Letting it throw gives the caller's own catch-all one more attempt.
+//
+// `bestEffort` is for that catch-all, the last place anything can be done:
+// there the error is logged and swallowed so an already-failing sync never
+// surfaces a second, raw database error to the client. If the row really
+// could not be updated, acquireSyncLock's stale-lock recovery still reclaims
+// it after staleLockMs.
+export async function releaseSyncLockAsFailed(
+  connectionId: string,
+  params: { syncError: string; lastFailedSyncAt: Date; needsAttention: boolean },
+  options?: { bestEffort?: boolean }
+): Promise<void> {
+  try {
+    await prisma.brokerageConnection.updateMany({
+      where: { id: connectionId },
+      data: {
+        syncStatus: "FAILED",
+        syncError: params.syncError,
+        lastFailedSyncAt: params.lastFailedSyncAt,
+        ...(params.needsAttention ? { status: "ERROR" } : {}),
+      },
+    });
+  } catch (err) {
+    if (!options?.bestEffort) throw err;
+    console.error(
+      `[sync-lock] could not record the sync failure for connection ${connectionId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}

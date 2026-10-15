@@ -273,6 +273,30 @@ describe("normalizeInteractiveBrokersActivityRow", () => {
     expect(normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type: "dividend payment" })).kind).toBe("dividend");
   });
 
+  it("classifies a Flex 'Deposits/Withdrawals' row by the sign of its amount", () => {
+    const deposit = normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type: "Deposits/Withdrawals", amount: 1000 }));
+    const withdrawal = normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type: "Deposits/Withdrawals", amount: -250 }));
+    expect(deposit.kind).toBe("deposit");
+    expect(deposit.direction).toBe("IN");
+    expect(withdrawal.kind).toBe("withdrawal");
+    expect(withdrawal.direction).toBe("OUT");
+  });
+
+  it("classifies fee and commission wording as a fee with the unsigned amount, and keeps the raw type", () => {
+    for (const type of ["Other Fees", "Broker Fees", "Commission Adjustments", "Advisor Fees"]) {
+      const item = normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type, amount: -3.5 }));
+      expect(item.kind).toBe("fee");
+      expect(item.fees).toBe(3.5);
+      expect(item.rawType).toBe(type);
+    }
+  });
+
+  it("leaves interest, tax and transfer wording in the honest catch-all", () => {
+    for (const type of ["Broker Interest Received", "Withholding Tax", "Transfer (INTERNAL)"]) {
+      expect(normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type, amount: 1 })).kind).toBe("transfer");
+    }
+  });
+
   it("buckets any other undocumented type as transfer, preserving the raw string for diagnostics", () => {
     const item = normalizeInteractiveBrokersActivityRow(ibkrActivityRow({ type: "Adjustment" }));
     expect(item.kind).toBe("transfer");

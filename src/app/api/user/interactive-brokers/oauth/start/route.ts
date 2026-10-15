@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUserId, UnauthenticatedError } from "@/server/auth/session";
+import { publicUrl } from "@/server/public-origin";
 import {
   fetchInteractiveBrokersRequestToken,
   getInteractiveBrokersAuthorizeUrl,
@@ -25,7 +26,7 @@ import {
 const CONNECTED_ACCOUNTS_PATH = "/profile/connected-accounts";
 
 function errorRedirect(req: NextRequest, reason: string): NextResponse {
-  return NextResponse.redirect(new URL(`${CONNECTED_ACCOUNTS_PATH}?ibkr=error&reason=${reason}`, req.url));
+  return NextResponse.redirect(publicUrl(`${CONNECTED_ACCOUNTS_PATH}?ibkr=error&reason=${reason}`, req));
 }
 
 export async function GET(req: NextRequest) {
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     userId = await requireUserId();
   } catch (err) {
     if (err instanceof UnauthenticatedError) {
-      return NextResponse.redirect(new URL("/signin", req.url));
+      return NextResponse.redirect(publicUrl("/signin", req));
     }
     throw err;
   }

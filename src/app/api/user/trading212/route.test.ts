@@ -15,6 +15,11 @@ vi.mock("@/server/repositories/trading212-repository", () => ({
   getTrading212Connection: (...args: unknown[]) => getTrading212Connection(...args),
 }));
 
+const checkRateLimit = vi.fn();
+vi.mock("@/lib/ai/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
+}));
+
 import { GET, POST, DELETE } from "./route";
 
 function postRequest(body: unknown) {
@@ -36,6 +41,26 @@ const CONNECTED_DTO = {
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  checkRateLimit.mockReturnValue(true);
+});
+
+describe("POST /api/user/trading212 — rate limit", () => {
+  it("rejects when rate-limited, before the submitted credentials are ever checked against Trading 212", async () => {
+    checkRateLimit.mockReturnValue(false);
+
+    const res = await POST(postRequest({ apiKey: "k", apiSecret: "s" }));
+
+    expect(res.status).toBe(400);
+    expect(connectTrading212).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits per signed-in user", async () => {
+    connectTrading212.mockResolvedValue({ status: "connected", connection: CONNECTED_DTO });
+
+    await POST(postRequest({ apiKey: "k", apiSecret: "s" }));
+
+    expect(checkRateLimit).toHaveBeenCalledWith("trading212-connect:user-1");
+  });
 });
 
 describe("GET /api/user/trading212", () => {

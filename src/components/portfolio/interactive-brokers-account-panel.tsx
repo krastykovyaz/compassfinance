@@ -20,6 +20,8 @@ import { Landmark, Loader2, RefreshCw, TriangleAlert, Check, ChevronDown, Chevro
 import { Card } from "@/components/ui/card";
 import { IconCircle } from "@/components/ui/icon-circle";
 import { useInteractiveBrokersPortfolio } from "@/lib/interactive-brokers/use-interactive-brokers-portfolio";
+import { useInteractiveBrokersConnection } from "@/lib/interactive-brokers/use-interactive-brokers-connection";
+import { InteractiveBrokersFlexConnectModal } from "@/components/profile/interactive-brokers-flex-connect-modal";
 import { useInteractiveBrokersActivity } from "@/lib/interactive-brokers/use-interactive-brokers-activity";
 import { ActivityList } from "@/components/portfolio/activity-list";
 import { Trading212ActivityFilterBar, type Trading212ActivityFilter } from "@/components/portfolio/trading212-activity-filter-bar";
@@ -30,6 +32,9 @@ import { useTranslation } from "@/lib/i18n/locale-provider";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 const BENEFIT_KEYS = ["benefitPortfolioCash", "benefitPositions", "benefitReadOnly"] as const;
+// A Flex report is a statement as of the last business day, not live data, so
+// its connect prompt must not promise "live, near-real-time positions".
+const FLEX_BENEFIT_KEYS = ["benefitPortfolioCash", "benefitPositionsFlex", "benefitReadOnly"] as const;
 
 type InteractiveBrokersAccountCandidate = { accountId: string; accountTitle: string | null; accountAlias: string | null; type: string | null };
 
@@ -44,6 +49,8 @@ type SyncUiState =
 export function InteractiveBrokersAccountPanel() {
   const { t } = useTranslation();
   const state = useInteractiveBrokersPortfolio();
+  const connectionState = useInteractiveBrokersConnection();
+  const [flexOpen, setFlexOpen] = useState(false);
   const load = state.refresh;
   const [syncState, setSyncState] = useState<SyncUiState>({ stage: "idle" });
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null);
@@ -112,6 +119,11 @@ export function InteractiveBrokersAccountPanel() {
 
   if (state.stage === "error") return null;
 
+  // While the connection status is still loading, assume the vendor sign-in
+  // is unavailable (the case today): it avoids briefly showing a button that
+  // can only fail.
+  const oauthAvailable = connectionState.stage === "loaded" && connectionState.oauthAvailable;
+
   if (!state.portfolio) {
     return (
       <Card>
@@ -126,19 +138,33 @@ export function InteractiveBrokersAccountPanel() {
         </div>
         <p className="mt-3 text-[13px] text-ink-muted">{t("interactiveBrokers.connectPromptFull")}</p>
         <ul className="mt-3 space-y-1.5">
-          {BENEFIT_KEYS.map((key) => (
+          {(oauthAvailable ? BENEFIT_KEYS : FLEX_BENEFIT_KEYS).map((key) => (
             <li key={key} className="flex items-center gap-2 text-[13px] text-ink-muted">
               <Check size={14} className="shrink-0 text-positive" />
               {t(`interactiveBrokers.${key}`)}
             </li>
           ))}
         </ul>
-        <a
-          href="/api/user/interactive-brokers/oauth/start"
-          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
-        >
-          {t("interactiveBrokers.connectButtonFull")}
-        </a>
+        {oauthAvailable ? (
+          <a
+            href="/api/user/interactive-brokers/oauth/start"
+            className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
+          >
+            {t("interactiveBrokers.connectButtonFull")}
+          </a>
+        ) : (
+          <button
+            onClick={() => setFlexOpen(true)}
+            className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-full bg-ink py-2.5 text-[13px] font-medium text-surface active:opacity-90"
+          >
+            {t("interactiveBrokers.connectButtonFull")}
+          </button>
+        )}
+        {oauthAvailable ? (
+          <button onClick={() => setFlexOpen(true)} className="mt-2 w-full py-1 text-center text-[12px] font-medium text-blue">
+            {t("interactiveBrokers.flexConnectButton")}
+          </button>
+        ) : null}
         <button
           onClick={() => setLearnMoreOpen((v) => !v)}
           className="mt-2 flex w-full items-center justify-center gap-1 py-1.5 text-[12px] font-medium text-ink-muted"
@@ -146,6 +172,14 @@ export function InteractiveBrokersAccountPanel() {
           {t("portfolio.learnMore")} {learnMoreOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
         {learnMoreOpen ? <p className="mt-1 text-[12px] text-ink-faint">{t("interactiveBrokers.benefitReadOnly")}</p> : null}
+        <InteractiveBrokersFlexConnectModal
+          open={flexOpen}
+          onClose={() => setFlexOpen(false)}
+          onConnected={() => {
+            load();
+            void handleSync();
+          }}
+        />
       </Card>
     );
   }
@@ -215,6 +249,10 @@ export function InteractiveBrokersAccountPanel() {
           </p>
         </div>
       </div>
+
+      {connectionState.stage === "loaded" && connectionState.connection?.method === "flex" ? (
+        <p className="mt-3 text-[11px] leading-snug text-ink-faint">{t("interactiveBrokers.flexConnectedNote")}</p>
+      ) : null}
 
       {syncState.stage === "needs_selection" ? (
         <div className="mt-3 rounded-xl border border-border p-3">

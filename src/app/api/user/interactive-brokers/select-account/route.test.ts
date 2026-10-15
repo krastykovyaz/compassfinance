@@ -16,6 +16,11 @@ vi.mock("@/server/repositories/interactive-brokers-repository", () => ({
   setInteractiveBrokersSelectedAccount: (...args: unknown[]) => setInteractiveBrokersSelectedAccount(...args),
 }));
 
+const checkRateLimit = vi.fn();
+vi.mock("@/lib/ai/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => checkRateLimit(...args),
+}));
+
 import { POST } from "./route";
 
 function request(body: unknown) {
@@ -34,10 +39,18 @@ const CANDIDATES = [
 beforeEach(() => {
   vi.clearAllMocks();
   requireUserId.mockResolvedValue("user-1");
+  checkRateLimit.mockReturnValue(true);
   discoverInteractiveBrokersAccounts.mockResolvedValue({ ok: true, accounts: CANDIDATES, authCredentials: {} });
 });
 
 describe("POST /api/user/interactive-brokers/select-account", () => {
+  it("rejects when rate-limited, without ever calling discovery (each call re-authenticates against IBKR)", async () => {
+    checkRateLimit.mockReturnValue(false);
+    const res = await POST(request({ accountId: "U1234567" }));
+    expect(res.status).toBe(400);
+    expect(discoverInteractiveBrokersAccounts).not.toHaveBeenCalled();
+  });
+
   it("401s a signed-out request without ever calling discovery", async () => {
     const { UnauthenticatedError } = await import("@/server/auth/session");
     requireUserId.mockRejectedValue(new UnauthenticatedError());

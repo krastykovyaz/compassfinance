@@ -114,6 +114,12 @@ async function translateBatch(
   if (locale === "en" || items.length === 0) return items;
 
   const { system, user } = buildPrompt(items, locale);
+  // expectJson: true already defaults DeepSeekProvider to
+  // disableReasoning — a deterministic translation task, not open-ended
+  // deliberation; without it DeepSeek's reasoning pass competes with the
+  // actual translated output for the same maxTokens budget (see
+  // deepseek-provider.ts's own comment for the live-reproduced version of
+  // this failure).
   const result = await provider.complete({
     systemPrompt: system,
     userPrompt: user,

@@ -6,7 +6,7 @@ import { WalletCard } from "@/components/profile/wallet-card";
 import { Trading212Card } from "@/components/profile/trading212-card";
 import { InteractiveBrokersCard } from "@/components/profile/interactive-brokers-card";
 import { useTranslation } from "@/lib/i18n/locale-provider";
-import { AskCompassButton } from "@/components/compass/ask-compass-button";
+import { useSetCompassContext } from "@/lib/compass/compass-provider";
 
 // Moved out of the main Settings page — the wallet and Trading 212
 // connection cards used to render inline on Settings itself, but that
@@ -17,23 +17,17 @@ import { AskCompassButton } from "@/components/compass/ask-compass-button";
 // happens right here, just one tap deeper.
 export default function ConnectedAccountsPage() {
   const { t } = useTranslation();
+  // The floating Compass button opens in this screen's own context, with
+  // starter questions about connecting each account.
+  useSetCompassContext({ type: "CONNECTED_ACCOUNTS" });
 
   return (
     <AppShell>
       <Header title={t("linkRows.connectedAccounts")} backHref="/profile/settings" />
       <div className="space-y-5 px-5">
-        <div className="space-y-2.5">
-          <WalletCard />
-          <AskCompassButton context={{ type: "HYPERLIQUID_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
-        </div>
-        <div className="space-y-2.5">
-          <Trading212Card />
-          <AskCompassButton context={{ type: "TRADING212_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
-        </div>
-        <div className="space-y-2.5">
-          <InteractiveBrokersCard />
-          <AskCompassButton context={{ type: "IBKR_CONNECTION" }} labelKey="compass.askAboutThisConnection" />
-        </div>
+        <WalletCard />
+        <Trading212Card />
+        <InteractiveBrokersCard />
       </div>
     </AppShell>
   );
