@@ -1,4 +1,5 @@
 import "server-only";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 import { getServerLearningProgress, saveLessonStepProgress as saveLessonStepProgressRepo } from "@/server/repositories/learning-repository";
 import { getAssetLearningPath } from "@/lib/learning/content";
@@ -153,7 +154,7 @@ async function notifyDerivedUnlocks(
 export async function completeLesson(userId: string, assetId: string): Promise<LearningProgress> {
   const path = getAssetLearningPath(assetId);
   if (!path) {
-    throw new Error(`Unknown assetId: ${assetId}`);
+    throw new ApiError(`Unknown assetId: ${assetId}`);
   }
 
   let derived: { newAchievementIds: string[]; newAssetUnlockIds: string[] } = {
@@ -207,7 +208,7 @@ export async function submitQuiz(
 ): Promise<{ grade: QuizGradeResult; progress: LearningProgress; alreadySubmitted: boolean }> {
   const path = getAssetLearningPath(assetId);
   if (!path) {
-    throw new Error(`Unknown assetId: ${assetId}`);
+    throw new ApiError(`Unknown assetId: ${assetId}`);
   }
 
   // Server grades from the canonical answer key — the client's own

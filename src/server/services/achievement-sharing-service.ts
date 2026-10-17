@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 import { getServerLearningProgress } from "@/server/repositories/learning-repository";
 import { getInvestmentAccess } from "@/lib/learning/unlocks";
@@ -7,7 +8,7 @@ import { getAchievement } from "@/lib/learning/achievements";
 import { toSupportedLocale } from "@/lib/i18n/translate";
 import type { Locale } from "@/lib/i18n/types";
 
-export class ShareError extends Error {}
+export class ShareError extends ApiError {}
 
 const TOKEN_LENGTH = 16;
 

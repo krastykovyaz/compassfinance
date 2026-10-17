@@ -50,7 +50,7 @@ describe("POST /api/user/trading212 — rate limit", () => {
 
     const res = await POST(postRequest({ apiKey: "k", apiSecret: "s" }));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(connectTrading212).not.toHaveBeenCalled();
   });
 

@@ -75,6 +75,10 @@ export type FlexReport = {
   fromDate: string | null;
   toDate: string | null;
   reportDate: string | null;
+  /** Whether the query included the Open Positions section at all. False
+   * means the report cannot say what the account holds, which is different
+   * from an account that holds nothing (an empty <OpenPositions /> element). */
+  hasOpenPositionsSection: boolean;
   totalValue: number | null;
   cash: number | null;
   positions: FlexPosition[];
@@ -275,6 +279,7 @@ export function parseFlexReport(xml: string): FlexParseResult {
       fromDate: str(statement?.attrs.fromDate),
       toDate: str(statement?.attrs.toDate),
       reportDate,
+      hasOpenPositionsSection: elements.some((e) => e.name === "OpenPositions"),
       totalValue,
       cash,
       positions: [...positionsByConid.values()],

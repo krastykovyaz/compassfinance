@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { shareAssetUnlock } from "@/server/services/achievement-sharing-service";
 import { buildAchievementShareUrl, getRequestOrigin } from "@/lib/referrals/urls";
 
@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     const userId = await requireUserId();
     const { assetId } = await req.json();
     if (typeof assetId !== "string" || !assetId) {
-      throw new Error("assetId is required");
+      throw new ApiError("assetId is required");
     }
     const { shareToken } = await shareAssetUnlock(userId, assetId);
     return { url: buildAchievementShareUrl(getRequestOrigin(req), shareToken) };

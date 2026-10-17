@@ -149,6 +149,16 @@ describe("syncInteractiveBrokersFlex", () => {
     expect(releaseSyncLockAsFailed.mock.calls[0][1].needsAttention).toBe(needsAttention);
   });
 
+  it("refuses a report whose query has no Open Positions section instead of deleting every stored position", async () => {
+    fetchFlexReport.mockResolvedValue({ ok: true, data: '<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1234567"><CashReportCurrency accountId="U1234567" currency="BASE_SUMMARY" endingCash="10" /></FlexStatement></FlexStatements></FlexQueryResponse>' });
+    const result = await syncInteractiveBrokersFlex("user-1", CREDENTIALS);
+    expect(result.status).toBe("failed");
+    expect(result.status === "failed" && result.message).toMatch(/no Open Positions section/);
+    expect(prismaMock.brokeragePosition.deleteMany).not.toHaveBeenCalled();
+    expect(prismaMock.brokerageAccount.upsert).not.toHaveBeenCalled();
+    expect(releaseSyncLockAsFailed).toHaveBeenCalledWith("conn-1", expect.objectContaining({ needsAttention: false }), undefined);
+  });
+
   it("fails cleanly on text that is not a Flex report", async () => {
     fetchFlexReport.mockResolvedValue({ ok: true, data: "<html>Maintenance</html>" });
 

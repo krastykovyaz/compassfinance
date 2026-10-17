@@ -1,4 +1,5 @@
 import "server-only";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 import type { InterestCategoryId } from "@/lib/interests/interests";
 import { isValidInterestKey } from "@/server/validation";
@@ -14,7 +15,7 @@ export async function listInterests(userId: string): Promise<InterestCategoryId[
 
 export async function addInterest(userId: string, key: string): Promise<InterestCategoryId[]> {
   if (!isValidInterestKey(key)) {
-    throw new Error(`Invalid interest key: ${key}`);
+    throw new ApiError(`Invalid interest key: ${key}`);
   }
   // Idempotent: (userId, key) is unique — adding twice yields one row.
   await prisma.userInterest.upsert({

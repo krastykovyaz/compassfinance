@@ -1,5 +1,5 @@
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { syncInteractiveBrokersForUser } from "@/server/interactive-brokers/interactive-brokers-flex-sync";
 
@@ -19,13 +19,13 @@ export async function POST() {
     // app's single shared IBKR_CONSUMER_KEY's upstream rate budget (each
     // sync does several real IBKR requests including the LST derivation).
     if (!checkRateLimit(`ibkr-sync:${userId}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const result = await syncInteractiveBrokersForUser(userId);
 
     if (result.status === "not_connected") {
-      throw new Error("Connect an Interactive Brokers account before syncing");
+      throw new ApiError("Connect an Interactive Brokers account before syncing");
     }
     // "already_syncing", "needs_account_selection", and "failed" are all
     // legitimate, non-throwing outcomes — syncInteractiveBrokers already

@@ -100,7 +100,12 @@ describe("decryptAccessTokenSecret", () => {
       Buffer.from("deadbeef", "hex")
     );
 
-    expect(() => decryptAccessTokenSecret(ciphertext.toString("base64"), privateKey)).toThrow(/PKCS#1/);
+    // Any throw is the right outcome. Usually it is the padding check, but
+    // about one run in twenty-five the other key's modulus is larger than
+    // ours and the ciphertext is >= our modulus, which OpenSSL rejects first
+    // ("data too large for modulus"). Matching /PKCS#1/ here made this test
+    // fail intermittently for exactly that reason.
+    expect(() => decryptAccessTokenSecret(ciphertext.toString("base64"), privateKey)).toThrow();
   });
 });
 

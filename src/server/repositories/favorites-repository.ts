@@ -1,4 +1,5 @@
 import "server-only";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 
 export type FavoriteDTO = { assetId: string; createdAt: string };
@@ -17,7 +18,7 @@ export async function listFavorites(userId: string): Promise<FavoriteDTO[]> {
 // there's no unlock-status check here at all.
 export async function addFavorite(userId: string, assetId: string): Promise<FavoriteDTO[]> {
   if (!assetId || typeof assetId !== "string") {
-    throw new Error("assetId is required");
+    throw new ApiError("assetId is required");
   }
   await prisma.userFavoriteAsset.upsert({
     where: { userId_assetId: { userId, assetId } },

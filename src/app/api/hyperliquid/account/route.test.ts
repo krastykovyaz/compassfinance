@@ -47,7 +47,7 @@ describe("GET /api/hyperliquid/account", () => {
 
     const res = await GET(request(ADDRESS));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(getHyperliquidAccount).not.toHaveBeenCalled();
   });
 

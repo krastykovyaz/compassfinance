@@ -125,6 +125,23 @@ describe("fetchFlexReport", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("stops polling when the overall deadline is near, so the sync fits inside the proxy's request timeout", async () => {
+    // SendRequest succeeds; every GetStatement answers "still generating"
+    // while a slow clock has 22s pass on each request.
+    let clock = 0;
+    fetchMock.mockImplementation(async (url: URL) => {
+      clock += 22_000;
+      return url.pathname.endsWith("SendRequest") ? xml(SEND_OK) : xml(envelope("Warn", "1019"));
+    });
+    const sleep = vi.fn(async () => undefined);
+    const result = await fetchFlexReport(CREDENTIALS, { sleep, now: () => clock });
+    expect(result).toEqual({ ok: false, reason: "not_ready", message: expect.stringContaining("isn't ready yet") });
+    // 45s budget: SendRequest (22s) + one GetStatement (22s) = 44s leaves
+    // 1s, too little for another request, so a second GetStatement is never
+    // sent and the caller hears "not ready" instead of a proxy timeout.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("gives up with not_ready instead of waiting forever", async () => {
     fetchMock.mockResolvedValueOnce(xml(SEND_OK));
     // A Response body can be read once, so every poll gets its own.

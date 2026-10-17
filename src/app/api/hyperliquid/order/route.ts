@@ -17,7 +17,7 @@
 // or attributed to a different account.
 
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { isValidEvmAddress } from "@/server/validation";
 import { checkRateLimit, getClientKey } from "@/lib/ai/rate-limit";
 import { submitHyperliquidExchangeAction } from "@/server/hyperliquid/service";
@@ -53,12 +53,12 @@ export async function POST(req: Request) {
     const userId = await requireUserId();
 
     if (!checkRateLimit(`hl-order:${getClientKey(req.headers)}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const body = await req.json().catch(() => null);
     if (!isValidSubmissionBody(body)) {
-      throw new Error("A valid address, action, nonce, and signature are required");
+      throw new ApiError("A valid address, action, nonce, and signature are required");
     }
 
     const result = await submitHyperliquidExchangeAction(

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { discoverInteractiveBrokersAccounts } from "@/server/interactive-brokers/interactive-brokers-sync";
 import { setInteractiveBrokersSelectedAccount } from "@/server/repositories/interactive-brokers-repository";
@@ -28,21 +28,21 @@ export async function POST(req: NextRequest) {
     // here, a tight client loop burns the app's single shared
     // IBKR_CONSUMER_KEY's rate budget for every user.
     if (!checkRateLimit(`ibkr-select-account:${userId}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const body = await req.json().catch(() => null);
     const accountId = body?.accountId;
     if (typeof accountId !== "string" || !accountId.trim()) {
-      throw new Error("An Interactive Brokers account id is required");
+      throw new ApiError("An Interactive Brokers account id is required");
     }
 
     const discovery = await discoverInteractiveBrokersAccounts(userId);
     if (!discovery.ok) {
-      throw new Error(discovery.message);
+      throw new ApiError(discovery.message);
     }
     if (!discovery.accounts.some((a) => a.accountId === accountId)) {
-      throw new Error("That account is no longer available for this Interactive Brokers connection");
+      throw new ApiError("That account is no longer available for this Interactive Brokers connection");
     }
 
     await setInteractiveBrokersSelectedAccount(userId, accountId);
