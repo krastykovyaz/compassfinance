@@ -28,7 +28,7 @@ describe("POST /api/user/interactive-brokers/sync", () => {
   it("rejects when rate-limited, without ever calling syncInteractiveBrokers", async () => {
     checkRateLimit.mockReturnValue(false);
     const res = await POST();
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(syncInteractiveBrokers).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import {
   connectTrading212,
@@ -28,17 +28,17 @@ export async function POST(req: NextRequest) {
     // itself — without a limit, a signed-in caller could rapid-fire
     // credential guesses through this endpoint.
     if (!checkRateLimit(`trading212-connect:${userId}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const body = await req.json().catch(() => null);
     const apiKey = body?.apiKey;
     const apiSecret = body?.apiSecret;
     if (typeof apiKey !== "string" || !apiKey.trim()) {
-      throw new Error("A Trading 212 API Key is required");
+      throw new ApiError("A Trading 212 API Key is required");
     }
     if (typeof apiSecret !== "string" || !apiSecret.trim()) {
-      throw new Error("A Trading 212 API Secret is required");
+      throw new ApiError("A Trading 212 API Secret is required");
     }
 
     const result = await connectTrading212(userId, apiKey.trim(), apiSecret.trim());
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     }
     // Never the raw validation error/upstream response — connectTrading212
     // already reduces it to one of a small set of safe, fixed messages.
-    throw new Error(result.message);
+    throw new ApiError(result.message);
   });
 }
 

@@ -23,6 +23,15 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const MAX_STATEMENT_POLLS = 5;
 const POLL_DELAY_MS = 2_500;
+// Total time one fetchFlexReport call may take, both steps and all polls
+// included. The sync runs inside a single HTTP request, and the reverse
+// proxy in front of the app closes a request after 60 seconds (nginx's
+// default proxy_read_timeout): past that the browser gets a 504 while the
+// sync keeps running, and a retry is refused as "already syncing". So the
+// whole fetch has to finish, one way or the other, well inside that.
+const FETCH_DEADLINE_MS = 45_000;
+// Not worth starting a request with less time than this left.
+const MIN_REQUEST_TIME_MS = 3_000;
 
 export type FlexCredentials = { token: string; queryId: string };
 
@@ -110,7 +119,7 @@ async function readCapped(res: Response): Promise<string | null> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function flexGet(path: string, params: Record<string, string>): Promise<FlexFetchResult<string>> {
+async function flexGet(path: string, params: Record<string, string>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<FlexFetchResult<string>> {
   const url = new URL(`${FLEX_BASE_URL}/${path}`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   url.searchParams.set("v", "3");
@@ -121,7 +130,7 @@ async function flexGet(path: string, params: Record<string, string>): Promise<Fl
       method: "GET",
       headers: { "User-Agent": USER_AGENT },
       redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     // The caught error is dropped on purpose: some fetch implementations
@@ -163,19 +172,29 @@ export async function requestFlexReport(credentials: FlexCredentials): Promise<F
   return { ok: true, data: { referenceCode } };
 }
 
-export type FlexFetchOptions = { sleep?: (ms: number) => Promise<void> };
+export type FlexFetchOptions = {
+  sleep?: (ms: number) => Promise<void>;
+  /** Clock, for tests. */
+  now?: () => number;
+};
 
 /** Both steps: request the report, then collect it, asking again while
- * IBKR says it is still being generated. */
+ * IBKR says it is still being generated, all within FETCH_DEADLINE_MS. When
+ * the deadline arrives first the result is not_ready: the user can sync
+ * again, and IBKR usually has the report by then. */
 export async function fetchFlexReport(credentials: FlexCredentials, options?: FlexFetchOptions): Promise<FlexFetchResult<string>> {
   const sleep = options?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = options?.now ?? Date.now;
+  const deadline = now() + FETCH_DEADLINE_MS;
+  const remaining = () => deadline - now();
 
   const requested = await requestFlexReport(credentials);
   if (!requested.ok) return requested;
 
   for (let attempt = 0; attempt < MAX_STATEMENT_POLLS; attempt++) {
-    if (attempt > 0) await sleep(POLL_DELAY_MS);
-    const response = await flexGet("GetStatement", { t: credentials.token, q: requested.data.referenceCode });
+    if (attempt > 0) await sleep(Math.min(POLL_DELAY_MS, Math.max(0, remaining())));
+    if (remaining() < MIN_REQUEST_TIME_MS) return fail("not_ready");
+    const response = await flexGet("GetStatement", { t: credentials.token, q: requested.data.referenceCode }, Math.min(REQUEST_TIMEOUT_MS, remaining()));
     if (!response.ok) return response;
     const failure = envelopeFailure(response.data);
     if (failure === null) return { ok: true, data: response.data };

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { requestFlexReport } from "@/server/interactive-brokers/interactive-brokers-flex-client";
 import { connectInteractiveBrokersFlex } from "@/server/repositories/interactive-brokers-repository";
@@ -22,24 +22,24 @@ export async function POST(req: NextRequest) {
     // Each attempt makes a real request to Interactive Brokers, which
     // limits Flex requests itself (about 10 a minute per token).
     if (!checkRateLimit(`ibkr-flex-connect:${userId}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const body = await req.json().catch(() => null);
     const token = typeof body?.token === "string" ? body.token.trim() : "";
     const queryId = typeof body?.queryId === "string" ? body.queryId.trim() : "";
     if (!TOKEN_PATTERN.test(token)) {
-      throw new Error("Enter the Flex token exactly as Interactive Brokers showed it.");
+      throw new ApiError("Enter the Flex token exactly as Interactive Brokers showed it.");
     }
     if (!QUERY_ID_PATTERN.test(queryId)) {
-      throw new Error("The Query ID is the number shown next to your Flex Query.");
+      throw new ApiError("The Query ID is the number shown next to your Flex Query.");
     }
 
     const check = await requestFlexReport({ token, queryId });
     if (!check.ok) {
       // check.message is one of a fixed set of sanitized strings, never
       // Interactive Brokers' own text.
-      throw new Error(check.message);
+      throw new ApiError(check.message);
     }
 
     return { connection: await connectInteractiveBrokersFlex(userId, { token, queryId }) };

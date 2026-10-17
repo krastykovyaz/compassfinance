@@ -4,6 +4,7 @@
 // same "pure logic separate from persistence" split the rest of
 // src/lib/learning/* already follows.
 import { getAssetLearningPath } from "@/lib/learning/content";
+import { ApiError } from "@/server/api-error";
 
 // Not something the pre-Milestone-11 client tracked (progression there
 // only ever depended on lesson + quiz *completion*, never a score
@@ -31,7 +32,7 @@ export type QuizGradeResult = {
 export function gradeQuiz(assetId: string, answers: QuizAnswerInput[]): QuizGradeResult {
   const path = getAssetLearningPath(assetId);
   if (!path) {
-    throw new Error(`Unknown assetId: ${assetId}`);
+    throw new ApiError(`Unknown assetId: ${assetId}`);
   }
   const answerByQuestion = new Map(answers.map((a) => [a.questionId, a.selectedOptionId]));
 

@@ -30,7 +30,7 @@ describe("POST /api/user/trading212/sync", () => {
 
     const res = await POST();
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(syncTrading212).not.toHaveBeenCalled();
   });
 

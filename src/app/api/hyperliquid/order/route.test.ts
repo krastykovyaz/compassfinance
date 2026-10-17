@@ -55,12 +55,12 @@ describe("POST /api/hyperliquid/order", () => {
     expect(submitHyperliquidExchangeAction).not.toHaveBeenCalled();
   });
 
-  it("rejects (400) when rate-limited, without ever calling the service", async () => {
+  it("rejects (429) when rate-limited, without ever calling the service", async () => {
     checkRateLimit.mockReturnValue(false);
 
     const res = await POST(request(VALID_BODY));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(submitHyperliquidExchangeAction).not.toHaveBeenCalled();
   });
 

@@ -47,7 +47,7 @@ describe("POST /api/user/interactive-brokers/select-account", () => {
   it("rejects when rate-limited, without ever calling discovery (each call re-authenticates against IBKR)", async () => {
     checkRateLimit.mockReturnValue(false);
     const res = await POST(request({ accountId: "U1234567" }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(discoverInteractiveBrokersAccounts).not.toHaveBeenCalled();
   });
 

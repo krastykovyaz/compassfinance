@@ -1,5 +1,5 @@
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import {
   upsertPushSubscription,
   deletePushSubscription,
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     const p256dh = body?.keys?.p256dh;
     const auth = body?.keys?.auth;
     if (typeof endpoint !== "string" || typeof p256dh !== "string" || typeof auth !== "string") {
-      throw new Error("A valid push subscription (endpoint, keys.p256dh, keys.auth) is required");
+      throw new ApiError("A valid push subscription (endpoint, keys.p256dh, keys.auth) is required");
     }
     const userAgent = req.headers.get("user-agent") ?? undefined;
     await upsertPushSubscription(userId, { endpoint, p256dh, auth, userAgent });
@@ -29,7 +29,7 @@ export async function DELETE(req: Request) {
     const userId = await requireUserId();
     const { endpoint } = await req.json();
     if (typeof endpoint !== "string" || !endpoint) {
-      throw new Error("endpoint is required");
+      throw new ApiError("endpoint is required");
     }
     // Only ever delete a subscription that actually belongs to the
     // authenticated user — a signed-in user can't blind-delete another

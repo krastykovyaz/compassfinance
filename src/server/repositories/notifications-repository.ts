@@ -1,4 +1,5 @@
 import "server-only";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 import {
   NOTIFICATION_CATEGORIES,
@@ -54,7 +55,7 @@ export async function setNotificationPreference(
   enabled: boolean
 ): Promise<NotificationPreferencesDTO> {
   if (!isValidNotificationCategory(category)) {
-    throw new Error(`Invalid notification category: ${category}`);
+    throw new ApiError(`Invalid notification category: ${category}`);
   }
   await prisma.userNotificationPreference.upsert({
     where: { userId_category: { userId, category } },
@@ -86,7 +87,7 @@ export async function setNotificationChannelPreference(
   enabled: boolean
 ): Promise<NotificationChannelPreferencesDTO> {
   if (!isValidNotificationChannel(channel)) {
-    throw new Error(`Invalid notification channel: ${channel}`);
+    throw new ApiError(`Invalid notification channel: ${channel}`);
   }
   const category = CHANNEL_PREFIX + channel;
   await prisma.userNotificationPreference.upsert({
@@ -151,7 +152,7 @@ export async function createNotificationOnce(
   extra?: { assetId?: string; tradeSide?: "BUY" | "SELL" }
 ): Promise<NotificationDTO | null> {
   if (!isValidNotificationEventType(type)) {
-    throw new Error(`Invalid notification event type: ${type}`);
+    throw new ApiError(`Invalid notification event type: ${type}`);
   }
   const assetId =
     extra?.assetId ??

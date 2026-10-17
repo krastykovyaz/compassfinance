@@ -1,4 +1,5 @@
 import "server-only";
+import { ApiError } from "@/server/api-error";
 import { prisma } from "@/server/db/prisma";
 import type { Locale } from "@/lib/i18n/types";
 import type { RiskProfileId } from "@/lib/risk-profile/risk-profiles";
@@ -35,7 +36,7 @@ export async function getProfile(userId: string): Promise<ProfileDTO> {
 
 export async function updateLocale(userId: string, locale: string): Promise<ProfileDTO> {
   if (!isValidLocale(locale)) {
-    throw new Error(`Invalid locale: ${locale}`);
+    throw new ApiError(`Invalid locale: ${locale}`);
   }
   const user = await prisma.user.update({
     where: { id: userId },
@@ -52,7 +53,7 @@ export async function updateRiskProfile(
   riskProfileId: string
 ): Promise<ProfileDTO> {
   if (!isValidRiskProfileId(riskProfileId)) {
-    throw new Error(`Invalid riskProfileId: ${riskProfileId}`);
+    throw new ApiError(`Invalid riskProfileId: ${riskProfileId}`);
   }
   const user = await prisma.user.update({
     where: { id: userId },

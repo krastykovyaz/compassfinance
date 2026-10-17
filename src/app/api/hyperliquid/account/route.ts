@@ -12,7 +12,7 @@
 // Hyperliquid requests" structurally rather than by convention.
 
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { isValidEvmAddress } from "@/server/validation";
 import { getHyperliquidAccount, getHyperliquidOpenOrders, getHyperliquidUserFills } from "@/server/hyperliquid/service";
@@ -33,13 +33,13 @@ export async function GET(req: Request) {
     // ordinary use with two tabs open, which blanked both panels and made a
     // transfer that had succeeded report as unconfirmed.
     if (!checkRateLimit(`hyperliquid-account:${userId}`, { max: HYPERLIQUID_ACCOUNT_MAX_REQUESTS_PER_MINUTE })) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const url = new URL(req.url);
     const address = url.searchParams.get("address");
     if (!address || !isValidEvmAddress(address)) {
-      throw new Error("A valid address query parameter is required");
+      throw new ApiError("A valid address query parameter is required");
     }
     // Phase 8: an optional HIP-3 dex ("xyz") reads that dex's own
     // ISOLATED margin pool instead of the main dex's — never a filtered

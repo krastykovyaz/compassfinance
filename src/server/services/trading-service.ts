@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db/prisma";
+import { ApiError } from "@/server/api-error";
 import {
   createSnapshot,
   deletePosition,
@@ -50,7 +51,7 @@ const RANGE_LOOKBACK_MS: Record<PerformanceRange, number | null> = {
 // microscopic residual position behind forever.
 const QUANTITY_EPSILON = 1e-9;
 
-export class TradingError extends Error {}
+export class TradingError extends ApiError {}
 
 function assertValidTradeInput(assetId: string, side: string, quantity: number): void {
   if (!isAssetId(assetId)) {

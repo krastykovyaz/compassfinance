@@ -1,5 +1,5 @@
 import { requireUserId } from "@/server/auth/session";
-import { withApiErrorHandling } from "@/server/api-helpers";
+import { ApiError, withApiErrorHandling } from "@/server/api-helpers";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { syncTrading212 } from "@/server/trading212/trading212-sync";
 
@@ -19,13 +19,13 @@ export async function POST() {
     // repeat calls — without this, a tight client loop can spend the
     // app's shared Trading 212 API budget for this user.
     if (!checkRateLimit(`trading212-sync:${userId}`)) {
-      throw new Error("Too many requests — please wait a moment before trying again.");
+      throw new ApiError("Too many requests — please wait a moment before trying again.", 429);
     }
 
     const result = await syncTrading212(userId);
 
     if (result.status === "not_connected") {
-      throw new Error("Connect a Trading 212 account before syncing");
+      throw new ApiError("Connect a Trading 212 account before syncing");
     }
     // "already_syncing" (the automatic scheduler is mid-run for this same
     // connection, or a duplicate click raced this same request) and

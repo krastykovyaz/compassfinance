@@ -263,6 +263,19 @@ export async function syncInteractiveBrokersFlex(userId: string, credentials: Fl
     }
     const report = parsed.report;
 
+    // writePositions replaces the stored positions with the report's. A
+    // report whose query lacks the Open Positions section has an empty list
+    // for a different reason, and syncing it would delete every position
+    // the user holds while reporting success. Refuse instead and say why.
+    if (!report.hasOpenPositionsSection) {
+      return await failedResult(connection.id, startedAt, {
+        status: "failed",
+        message:
+          "The Flex Query has no Open Positions section, so the report cannot say what the account holds. Edit the query in Interactive Brokers, add Open Positions, and sync again. Nothing was changed.",
+        category: "INVALID_RESPONSE",
+      });
+    }
+
     const account = await writeAccount(userId, connection.id, report);
     const positions = await writePositions(userId, connection.id, report);
     if (account.status !== "success" || positions.status !== "success") {

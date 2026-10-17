@@ -57,7 +57,7 @@ describe("POST /api/user/interactive-brokers/flex", () => {
 
     const res = await POST(request({ token: "TOKEN12345", queryId: "1" }));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(429);
     expect(checkRateLimit).toHaveBeenCalledWith("ibkr-flex-connect:user-1");
     expect(requestFlexReport).not.toHaveBeenCalled();
   });

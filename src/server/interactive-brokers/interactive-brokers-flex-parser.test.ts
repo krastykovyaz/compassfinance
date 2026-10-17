@@ -118,6 +118,14 @@ describe("parseFlexReport", () => {
     expect(parsed.ok && parsed.report.cash).toBe(77.5);
   });
 
+  it("says whether the Open Positions section was in the query at all, apart from whether anything is held", () => {
+    const withSection = parseFlexReport('<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1"><OpenPositions /></FlexStatement></FlexStatements></FlexQueryResponse>');
+    expect(withSection.ok && withSection.report.hasOpenPositionsSection).toBe(true);
+    expect(withSection.ok && withSection.report.positions).toEqual([]);
+    const without = parseFlexReport('<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1"><CashReportCurrency accountId="U1" currency="BASE_SUMMARY" endingCash="1" /></FlexStatement></FlexStatements></FlexQueryResponse>');
+    expect(without.ok && without.report.hasOpenPositionsSection).toBe(false);
+  });
+
   it("rejects text that isn't a Flex report", () => {
     expect(parseFlexReport("<html><body>Maintenance</body></html>")).toEqual({ ok: false, message: expect.any(String) });
     expect(parseFlexReport("")).toEqual({ ok: false, message: expect.any(String) });
